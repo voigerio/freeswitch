@@ -1480,6 +1480,7 @@ static void our_sofia_event_callback(nua_event_t event,
 	switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "[SOFIA_DEBUG] Event=%s  Profile=%s\n", nua_event_name(event), profile ? profile->name : "NULL");
 
 	if (sofia_private) {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "[SOFIA_DEBUG] sofia_private gateway_name=%s\n", (sofia_private->gateway_name && !zstr(sofia_private->gateway_name)) ? sofia_private->gateway_name : "NULL");
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "[SOFIA_DEBUG] sofia_private gateway_name=%s\n", zstr(sofia_private->gateway_name) ? "NULL" : sofia_private->gateway_name);
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "[SOFIA_DEBUG] sofia_private destroy_private=%s\n", (sofia_private == &mod_sofia_globals.destroy_private) ? "yes" : "no");
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "[SOFIA_DEBUG] sofia_private keep_private=%s\n", (sofia_private != &mod_sofia_globals.keep_private) ? "yes" : "no");
