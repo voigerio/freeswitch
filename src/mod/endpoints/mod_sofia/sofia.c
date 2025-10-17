@@ -1476,15 +1476,6 @@ static void our_sofia_event_callback(nua_event_t event,
 	int locked = 0;
 	int check_destroy = 1;
 
-	/* === DEBUG: Gateway association tracking === */
-	switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "[SOFIA_DEBUG] Event=%s  Profile=%s\n", nua_event_name(event), profile ? profile->name : "NULL");
-
-	if (sofia_private) {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "[SOFIA_DEBUG] sofia_private gateway_name=%s \n", zstr(sofia_private->gateway_name) ? "NULL");
-	} else {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "[SOFIA_DEBUG] sofia_private is NULL\n");
-	}
-
 	profile->last_sip_event = switch_time_now();
 
 	/* sofia_private will be == &mod_sofia_globals.keep_private whenever a request is done with a new handle that has to be
