@@ -3329,10 +3329,10 @@ typedef struct {
     int external_calls_count;
     char status[64];
 	switch_bool_t found;
-} agent_sql_result_t;
+} agent_update_external_calls_count_result_t;
 
 static int update_external_calls_count_sql_callback(void *pArg, int argc, char **argv, char **columnNames) {
-    agent_sql_result_t *result = (agent_sql_result_t *) pArg;
+    agent_update_external_calls_count_result_t *result = (agent_update_external_calls_count_result_t *) pArg;
 
     for (int i = 0; i < argc; i++) {
         if (!strcmp(columnNames[i], "external_calls_count")) {
@@ -3353,6 +3353,7 @@ static switch_status_t cc_hook_state_run(switch_core_session_t *session)
 	switch_channel_state_t state = switch_channel_get_state(channel);
 	const char *agent_name = NULL;
 	char *sql = NULL;
+	agent_update_external_calls_count_result_t result;
 
 	agent_name = switch_channel_get_variable(channel, "cc_tracked_agent");
 	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Called cc_hook_hanguphook channel %s with state %s", switch_channel_get_name(channel), switch_channel_state_name(state));
@@ -3361,7 +3362,8 @@ static switch_status_t cc_hook_state_run(switch_core_session_t *session)
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Tracked call for agent %s ended, decreasing external_calls_count", agent_name);
 		sql = switch_mprintf("UPDATE agents SET external_calls_count = external_calls_count - 1 WHERE name = '%q' RETURNING external_calls_count, status", agent_name);
 
-		agent_sql_result_t result = { 0 };
+		memset(&result, 0, sizeof(result));
+
 		cc_execute_sql_callback(NULL, NULL, sql, update_external_calls_count_sql_callback, &result);
 
 		switch_safe_free(sql);
