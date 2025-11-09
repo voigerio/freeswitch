@@ -3351,6 +3351,8 @@ SWITCH_STANDARD_APP(callcenter_track)
 	char agent_status[255];
 	char *agent_name = NULL;
 	char *sql = NULL;
+	char res[256] = "";
+	switch_event_t *event;
 
 	if (zstr(data)) {
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Missing agent name\n");
@@ -3366,9 +3368,21 @@ SWITCH_STANDARD_APP(callcenter_track)
 
 	switch_channel_set_variable(channel, "cc_tracked_agent", agent_name);
 
-	sql = switch_mprintf("UPDATE agents SET external_calls_count = external_calls_count + 1 WHERE name = '%q'", agent_name);
-	cc_execute_sql(NULL, sql, NULL);
+	sql = switch_mprintf("UPDATE agents SET external_calls_count = external_calls_count + 1 WHERE name = '%q' RETURNING external_calls_count", agent_name);
+	cc_execute_sql2str(NULL, NULL, sql, res, sizeof(res));
 	switch_safe_free(sql);
+
+	if (!zstr(res)) {
+		if (switch_event_create_subclass(&event, SWITCH_EVENT_CUSTOM, CALLCENTER_EVENT) == SWITCH_STATUS_SUCCESS) {
+			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "CC-Agent", agent_name);
+			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "CC-Action", "agent-external-calls-count-change");
+			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "CC-Agent-External-Calls-Count", res);
+			switch_event_fire(&event);
+		}
+	} else {
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING,
+						"No agent row updated for %s\n", agent_name);
+	}
 
 	switch_core_event_hook_add_state_run(session, cc_hook_state_run);
 	PROTECT_INTERFACE(app_interface);
