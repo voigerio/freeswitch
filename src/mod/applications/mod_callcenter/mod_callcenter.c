@@ -124,7 +124,8 @@ typedef enum {
 	CC_AGENT_STATE_RECEIVING = 2,
 	CC_AGENT_STATE_IN_A_QUEUE_CALL = 3,
 	CC_AGENT_STATE_IDLE = 4,
-	CC_AGENT_STATE_RESERVED = 5
+	CC_AGENT_STATE_RESERVED = 5,
+	CC_AGENT_STATE_IN_AN_EXTERNAL_CALL = 6
 } cc_agent_state_t;
 
 static struct cc_state_table AGENT_STATE_CHART[] = {
@@ -134,6 +135,7 @@ static struct cc_state_table AGENT_STATE_CHART[] = {
 	{"In a queue call", CC_AGENT_STATE_IN_A_QUEUE_CALL},
 	{"Idle", CC_AGENT_STATE_IDLE},
 	{"Reserved", CC_AGENT_STATE_RESERVED},
+	{"In an external call", CC_AGENT_STATE_IN_AN_EXTERNAL_CALL},
 	{NULL, 0}
 
 };
@@ -3415,7 +3417,7 @@ SWITCH_STANDARD_APP(callcenter_track)
 	switch_safe_free(sql);
 
 	if (!zstr(res)) {
-		cc_agent_update("state", cc_agent_state2str(CC_AGENT_STATE_IN_A_QUEUE_CALL), agent_name);
+		cc_agent_update("state", cc_agent_state2str(CC_AGENT_STATE_IN_AN_EXTERNAL_CALL), agent_name);
 	} else {
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING,
 						"No agent row updated for %s\n", agent_name);
