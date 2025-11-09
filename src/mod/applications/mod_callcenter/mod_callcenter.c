@@ -3396,7 +3396,6 @@ SWITCH_STANDARD_APP(callcenter_track)
 	char *agent_name = NULL;
 	char *sql = NULL;
 	char res[256] = "";
-	switch_event_t *event;
 
 	if (zstr(data)) {
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Missing agent name\n");
