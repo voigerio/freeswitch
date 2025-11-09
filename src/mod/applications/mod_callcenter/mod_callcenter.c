@@ -3323,6 +3323,28 @@ end:
 
 switch_application_interface_t *app_interface = NULL;
 
+typedef struct {
+    int external_calls_count;
+    char status[64];
+	switch_bool_t found;
+} agent_sql_result_t;
+
+static int update_external_calls_count_sql_callback(void *pArg, int argc, char **argv, char **columnNames) {
+    agent_sql_result_t *result = (agent_sql_result_t *) pArg;
+
+    for (int i = 0; i < argc; i++) {
+        if (!strcmp(columnNames[i], "external_calls_count")) {
+            result->external_calls_count = argv[i] ? atoi(argv[i]) : 0;
+        } else if (!strcmp(columnNames[i], "status")) {
+            switch_snprintf(result->status, sizeof(result->status), "%s", argv[i] ? argv[i] : "");
+        }
+    }
+
+	result->found = SWITCH_TRUE;  // mark row found
+
+	return 0;
+}
+
 static switch_status_t cc_hook_state_run(switch_core_session_t *session)
 {
 	switch_channel_t *channel = switch_core_session_get_channel(session);
@@ -3335,9 +3357,29 @@ static switch_status_t cc_hook_state_run(switch_core_session_t *session)
 
 	if (state == CS_HANGUP) {
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Tracked call for agent %s ended, decreasing external_calls_count", agent_name);
-		sql = switch_mprintf("UPDATE agents SET external_calls_count = external_calls_count - 1 WHERE name = '%q'", agent_name);
-		cc_execute_sql(NULL, sql, NULL);
+		sql = switch_mprintf("UPDATE agents SET external_calls_count = external_calls_count - 1 WHERE name = '%q' RETURNING external_calls_count, status", agent_name);
+
+		agent_sql_result_t result = { 0 };
+		cc_execute_sql_callback(NULL, NULL, sql, update_external_calls_count_sql_callback, &result);
+
 		switch_safe_free(sql);
+
+		if (!result.found) {
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Agent %s not found or no row returned, not updating state", agent_name);
+			return SWITCH_STATUS_SUCCESS;
+		}
+
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "Agent %s: new external_calls_count=%d, status=%s\n", agent_name, result.external_calls_count, result.status);
+
+		if (result.external_calls_count < 1) {
+			/* If we are in Status Available On Demand, set state to Idle so we do not receive another call until state manually changed to Waiting */
+			if (!strcasecmp(cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE_ON_DEMAND), result.status)) {
+				cc_agent_update("state", cc_agent_state2str(CC_AGENT_STATE_IDLE), agent_name);
+			} else {
+				cc_agent_update("state", cc_agent_state2str(CC_AGENT_STATE_WAITING), agent_name);
+			}
+		}
+
 		switch_core_event_hook_remove_state_run(session, cc_hook_state_run);
 		UNPROTECT_INTERFACE(app_interface);
 	}
@@ -3373,12 +3415,7 @@ SWITCH_STANDARD_APP(callcenter_track)
 	switch_safe_free(sql);
 
 	if (!zstr(res)) {
-		if (switch_event_create_subclass(&event, SWITCH_EVENT_CUSTOM, CALLCENTER_EVENT) == SWITCH_STATUS_SUCCESS) {
-			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "CC-Agent", agent_name);
-			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "CC-Action", "agent-external-calls-count-change");
-			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "CC-Agent-External-Calls-Count", res);
-			switch_event_fire(&event);
-		}
+		cc_agent_update("state", cc_agent_state2str(CC_AGENT_STATE_IN_A_QUEUE_CALL), agent_name);
 	} else {
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING,
 						"No agent row updated for %s\n", agent_name);
