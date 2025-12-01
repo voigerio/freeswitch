@@ -89,6 +89,7 @@ typedef struct private_object private_object_t;
 #define MY_EVENT_EXPIRE "sofia::expire"
 #define MY_EVENT_GATEWAY_STATE "sofia::gateway_state"
 #define MY_EVENT_SIP_USER_STATE "sofia::sip_user_state"
+#define MY_EVENT_SIP_USER_PING_STATE "sofia::sip_user_ping_state"
 #define MY_EVENT_NOTIFY_REFER "sofia::notify_refer"
 #define MY_EVENT_REINVITE "sofia::reinvite"
 #define MY_EVENT_GATEWAY_ADD "sofia::gateway_add"
@@ -1250,6 +1251,8 @@ void sofia_reg_fire_custom_gateway_state_event(sofia_gateway_t *gateway, int sta
 const char *sofia_sip_user_status_name(sofia_sip_user_status_t status);
 void sofia_reg_fire_custom_sip_user_state_event(sofia_profile_t *profile, const char *sip_user, const char *contact,
 							const char* from_user, const char* from_host, const char *call_id, sofia_sip_user_status_t status, int options_res, const char *phrase);
+void sofia_reg_fire_custom_sip_user_ping_state_event(sofia_profile_t *profile, const char *sip_user, const char *contact,
+							const char* from_user, const char* from_host, const char *call_id, int options_res, int ping_count, int ping_time, const char *phrase);
 uint32_t sofia_reg_reg_count(sofia_profile_t *profile, const char *user, const char *host);
 char *sofia_media_get_multipart(switch_core_session_t *session, const char *prefix, const char *sdp, char **mp_type);
 int sofia_glue_tech_simplify(private_object_t *tech_pvt);

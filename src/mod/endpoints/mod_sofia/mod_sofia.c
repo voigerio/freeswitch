@@ -6594,6 +6594,11 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_sofia_load)
 		switch_goto_status(SWITCH_STATUS_TERM, err);
 	}
 
+	if (switch_event_reserve_subclass(MY_EVENT_SIP_USER_PING_STATE) != SWITCH_STATUS_SUCCESS) {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Couldn't register subclass %s!\n", MY_EVENT_SIP_USER_PING_STATE);
+		switch_goto_status(SWITCH_STATUS_TERM, err);
+	}
+
 	if (switch_event_reserve_subclass(MY_EVENT_GATEWAY_DEL) != SWITCH_STATUS_SUCCESS) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Couldn't register subclass %s!\n", MY_EVENT_GATEWAY_DEL);
 		switch_goto_status(SWITCH_STATUS_TERM, err);
@@ -6845,6 +6850,7 @@ void mod_sofia_shutdown_cleanup(void) {
 	switch_event_free_subclass(MY_EVENT_INTERCEPTED);
 	switch_event_free_subclass(MY_EVENT_GATEWAY_STATE);
 	switch_event_free_subclass(MY_EVENT_SIP_USER_STATE);
+	switch_event_free_subclass(MY_EVENT_SIP_USER_PING_STATE);
 	switch_event_free_subclass(MY_EVENT_GATEWAY_DEL);
 	switch_event_free_subclass(MY_EVENT_EXPIRE);
 	switch_event_free_subclass(MY_EVENT_REGISTER_ATTEMPT);
