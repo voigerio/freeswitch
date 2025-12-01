@@ -6536,6 +6536,8 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 									 sip_user_status.count, ping_time, sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, call_id);
 				sofia_glue_execute_sql(profile, &sql, SWITCH_TRUE);
 				switch_safe_free(sql);
+				sofia_reg_fire_custom_sip_user_ping_state_event(profile, sip_user, sip_user_status.contact, sip->sip_to->a_url->url_user,
+															   sip->sip_to->a_url->url_host, call_id, status, sip_user_status.count, ping_time, phrase);
 			}
 			if (sip_user_status.count < sip_user_ping_min) {
 				if (strcmp(sip_user_status.status, "Unreachable")) {
@@ -6546,7 +6548,7 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 					sofia_glue_execute_sql(profile, &sql, SWITCH_TRUE);
 					switch_safe_free(sql);
 					sofia_reg_fire_custom_sip_user_state_event(profile, sip_user, sip_user_status.contact, sip->sip_to->a_url->url_user,
-															   sip->sip_to->a_url->url_host, call_id, SOFIA_REG_REACHABLE, status, phrase);
+															   sip->sip_to->a_url->url_host, call_id, status, sip_user_status.count, ping_time, phrase);
 
 					if (sofia_test_pflag(profile, PFLAG_UNREG_OPTIONS_FAIL)) {
 						time_t now = switch_epoch_time_now(NULL);
@@ -6569,6 +6571,8 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 									 sip_user_status.count, ping_time, sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, call_id);
 				sofia_glue_execute_sql(profile, &sql, SWITCH_TRUE);
 				switch_safe_free(sql);
+				sofia_reg_fire_custom_sip_user_ping_state_event(profile, sip_user, sip_user_status.contact, sip->sip_to->a_url->url_user,
+															   sip->sip_to->a_url->url_host, call_id, SOFIA_REG_UNREACHABLE, status, phrase);
 			}
 			if (sip_user_status.count >= sip_user_ping_min) {
 				if (strcmp(sip_user_status.status, "Reachable")) {
