@@ -6444,7 +6444,6 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 {
 	sofia_gateway_t *gateway = NULL;
 	switch_bool_t do_fire_gateway_state_event = SWITCH_FALSE;
-	switch_event_t *event;
 
 	if (sofia_private && !zstr(sofia_private->gateway_name)) {
 		gateway = sofia_reg_find_gateway(sofia_private->gateway_name);
@@ -6573,15 +6572,6 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 									 sip_user_status.count, ping_time, sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, call_id);
 				sofia_glue_execute_sql(profile, &sql, SWITCH_TRUE);
 				switch_safe_free(sql);
-
-				if (switch_event_create_subclass(&event, SWITCH_EVENT_CUSTOM, MY_EVENT_PING) == SWITCH_STATUS_SUCCESS) {
-					switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "profile-name", profile->name);
-					switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "current-ping-status", "success");
-					switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "ping-time", "%d", ping_time);
-					switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "ping-count", "%d", sip_user_status.count);
-					switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "sip-user", sip->sip_to->a_url->url_user);
-					switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "sip-host", sip->sip_to->a_url->url_host);
-				}
 			}
 			if (sip_user_status.count >= sip_user_ping_min) {
 				if (strcmp(sip_user_status.status, "Reachable")) {
@@ -6599,10 +6589,6 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 
 		switch_safe_free(sip_user);
 
-	}
-
-	if (event) {
-		switch_event_fire(&event);
 	}
 }
 
