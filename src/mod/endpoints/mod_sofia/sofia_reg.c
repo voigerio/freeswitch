@@ -203,8 +203,8 @@ void sofia_reg_fire_custom_sip_user_ping_state_event(sofia_profile_t *profile, c
 		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "from-user", from_user);
 		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "from-host", from_host);
 		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "call-id", call_id);
-		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "ping-count", ping_count);
-		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "ping-time", ping_time);
+		switch_event_add_header(s_event, SWITCH_STACK_BOTTOM, "ping-count", "%d", ping_count);
+		switch_event_add_header(s_event, SWITCH_STACK_BOTTOM, "ping-time", "%d", ping_time);
 		switch_event_add_header(s_event, SWITCH_STACK_BOTTOM, "Status", "%d", options_res);
 		if (!zstr(phrase)) {
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "Phrase", phrase);
