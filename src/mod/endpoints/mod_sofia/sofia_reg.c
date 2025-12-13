@@ -1631,7 +1631,40 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 			if (contact)
 				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact", contact_str);
 			if (contact) {
-				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Contact URI %s\n", contact->m_url);
+				/* Print URI */
+				if (contact->m_url) {
+					switch_log_printf(
+						SWITCH_CHANNEL_LOG,
+						SWITCH_LOG_ERROR,
+						"Contact URI: %s\n",
+						contact->m_url->url
+					);
+				} else {
+					switch_log_printf(
+						SWITCH_CHANNEL_LOG,
+						SWITCH_LOG_ERROR,
+						"Contact URI: (null)\n"
+					);
+				}
+
+				/* Print parameters */
+				if (contact->m_params) {
+					for (sip_param_t *p = contact->m_params; p; p = p->next) {
+						switch_log_printf(
+							SWITCH_CHANNEL_LOG,
+							SWITCH_LOG_ERROR,
+							"Contact param: %s=%s\n",
+							p->name ? p->name : "(null)",
+							p->value ? p->value : "(null)"
+						);
+					}
+				} else {
+					switch_log_printf(
+						SWITCH_CHANNEL_LOG,
+						SWITCH_LOG_ERROR,
+						"Contact params: (none)\n"
+					);
+				}
 			}
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "call-id", call_id);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "rpid", rpid);
