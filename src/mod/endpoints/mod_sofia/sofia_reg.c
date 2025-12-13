@@ -1630,15 +1630,26 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "from-host", reg_host);
 			if (contact)
 				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact", contact_str);
+
+			char *contact_params = NULL;
 			if (contact && contact->m_params) {
 				for (const char * const *p = contact->m_params; *p; p++) {
-					switch_log_printf(
-						SWITCH_CHANNEL_LOG,
-						SWITCH_LOG_ERROR,
-						"Contact param: %s\n",
-						*p
-					);
+					if (contact_params) {
+						char *tmp = contact_params;
+						contact_params = switch_mprintf("%s;%s", contact_params, *p);
+						switch_safe_free(tmp);
+					} else {
+						contact_params = switch_mprintf("%s", *p);
+					}
 				}
+			}
+
+			/* Use contact_params */
+			if (contact_params) {
+				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR,
+								"Contact params: %s\n", contact_params);
+				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact-params", contact_params);
+				switch_safe_free(contact_params);
 			}
 
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "call-id", call_id);
