@@ -1644,7 +1644,6 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 				}
 			}
 
-			/* Use contact_params */
 			if (contact_params) {
 				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR,
 								"Contact params: %s\n", contact_params);
