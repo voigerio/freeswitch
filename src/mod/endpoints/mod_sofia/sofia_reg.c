@@ -1631,13 +1631,16 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 			if (contact)
 				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact", contact_str);
 			if (contact && contact->m_params) {
-				switch_log_printf(
-					SWITCH_CHANNEL_LOG,
-					SWITCH_LOG_ERROR,
-					"Contact params raw: %s\n",
-					contact->m_params
-				);
+				for (const char * const *p = contact->m_params; *p; p++) {
+					switch_log_printf(
+						SWITCH_CHANNEL_LOG,
+						SWITCH_LOG_ERROR,
+						"Contact param: %s\n",
+						*p
+					);
+				}
 			}
+
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "call-id", call_id);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "rpid", rpid);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "status", reg_desc);
