@@ -1631,9 +1631,7 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 			if (contact)
 				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact", contact_str);
 			if (contact) {
-				char *full_contact = sip_header_as_string(nua_handle_get_home(nh), (void *) contact);
-				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "full-contact", full_contact);
-				su_free(nua_handle_get_home(nh), full_contact);
+				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Contact URI %s\n", contact->m_url);
 			}
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "call-id", call_id);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "rpid", rpid);
