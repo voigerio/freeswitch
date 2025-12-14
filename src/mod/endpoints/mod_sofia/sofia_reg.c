@@ -1387,7 +1387,9 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 
 	if (sip && sip->sip_contact && sip->sip_contact->m_url->url_params) {
 		uparams = sip->sip_contact->m_url->url_params;
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "UPARAMS: %s\n", uparams);
 	} else {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "UPARAMS: NULL\n");
 		uparams = NULL;
 	}
 
@@ -1476,6 +1478,14 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 		char *path_encoded = NULL;
 		int path_encoded_len = 0;
 
+		if (contact && contact->m_params) {
+			switch_log_printf(
+				SWITCH_CHANNEL_LOG,
+				SWITCH_LOG_ERROR,
+				"Contact params raw: %s\n",
+				contact->m_params
+			);
+		}
 
 		if (uparams && switch_stristr("transport=tls", uparams)) {
 			is_tls += 1;
