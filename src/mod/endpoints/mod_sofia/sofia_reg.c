@@ -1647,6 +1647,7 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 
 			if (contact_params) {
 				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Contact params1: %s\n", contact_params);
+				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "paramsua", "contact_params");
 				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact-params", contact_params);
 			}
 
