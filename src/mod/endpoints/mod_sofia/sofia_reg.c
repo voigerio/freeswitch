@@ -1479,12 +1479,14 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 		int path_encoded_len = 0;
 
 		if (contact && contact->m_params) {
-			switch_log_printf(
-				SWITCH_CHANNEL_LOG,
-				SWITCH_LOG_ERROR,
-				"Contact params raw: %s\n",
-				contact->m_params
-			);
+			for (const char * const *p = contact->m_params; *p; p++) {
+					switch_log_printf(
+						SWITCH_CHANNEL_LOG,
+						SWITCH_LOG_ERROR,
+						"Contact param: %s\n",
+						*p
+					);
+				}
 		}
 
 		if (uparams && switch_stristr("transport=tls", uparams)) {
