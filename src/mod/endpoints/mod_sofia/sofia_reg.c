@@ -1649,7 +1649,6 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR,
 								"Contact params: %s\n", contact_params);
 				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact-params", contact_params);
-				switch_safe_free(contact_params);
 			}
 
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "call-id", call_id);
@@ -1680,6 +1679,8 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
                 break;
             }
 			switch_event_fire(&s_event);
+
+			if (contact_params) switch_safe_free(contact_params);
 		}
 
 		if (contact && exptime && v_event && *v_event) {
