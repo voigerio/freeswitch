@@ -172,12 +172,13 @@ void sofia_reg_fire_custom_gateway_state_event(sofia_gateway_t *gateway, int sta
 	}
 }
 
-void sofia_reg_fire_custom_sip_user_state_event(sofia_profile_t *profile, const char *sip_user, const char *contact,
+void sofia_reg_fire_custom_sip_user_state_event(sofia_profile_t *profile, const char *sip_user, const char *contact, const char *sip_instance,
 							const char* from_user, const char* from_host, const char *call_id, sofia_sip_user_status_t status, int options_res, const char *phrase)
 {
 	switch_event_t *s_event;
 	if (switch_event_create_subclass(&s_event, SWITCH_EVENT_CUSTOM, MY_EVENT_SIP_USER_STATE) == SWITCH_STATUS_SUCCESS) {
 		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "sip_contact", contact);
+		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "sip-instance", sip_instance);
 		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "profile-name", profile->name);
 		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "sip_user", sip_user);
 		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "from-user", from_user);
@@ -192,12 +193,13 @@ void sofia_reg_fire_custom_sip_user_state_event(sofia_profile_t *profile, const 
 	}
 }
 
-void sofia_reg_fire_custom_sip_user_ping_state_event(sofia_profile_t *profile, const char *sip_user, const char *contact,
+void sofia_reg_fire_custom_sip_user_ping_state_event(sofia_profile_t *profile, const char *sip_user, const char *contact, const char *sip_instance,
 							const char* from_user, const char* from_host, const char *call_id, int options_res, int ping_count, int ping_time, const char *phrase)
 {
 	switch_event_t *s_event;
 	if (switch_event_create_subclass(&s_event, SWITCH_EVENT_CUSTOM, MY_EVENT_SIP_USER_PING_STATE) == SWITCH_STATUS_SUCCESS) {
 		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "sip_contact", contact);
+		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "sip-instance", sip_instance);
 		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "profile-name", profile->name);
 		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "sip_user", sip_user);
 		switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "from-user", from_user);
