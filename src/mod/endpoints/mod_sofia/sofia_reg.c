@@ -1409,9 +1409,7 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 
 	if (sip && sip->sip_contact && sip->sip_contact->m_url->url_params) {
 		uparams = sip->sip_contact->m_url->url_params;
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "UPARAMS: %s\n", uparams);
 	} else {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "UPARAMS: NULL\n");
 		uparams = NULL;
 	}
 
@@ -1502,17 +1500,6 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 
 		get_sip_instance_from_contact(contact, sip_instance, sizeof(sip_instance));
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "sip.instance = '%s'\n", sip_instance);
-
-		if (contact && contact->m_params) {
-			for (const char * const *p = contact->m_params; *p; p++) {
-					switch_log_printf(
-						SWITCH_CHANNEL_LOG,
-						SWITCH_LOG_ERROR,
-						"Contact param: %s\n",
-						*p
-					);
-				}
-		}
 
 		if (uparams && switch_stristr("transport=tls", uparams)) {
 			is_tls += 1;
@@ -1662,8 +1649,6 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 			realm = switch_event_get_header(auth_params, "sip_auth_realm");
 		}
 		if (switch_event_create_subclass(&s_event, SWITCH_EVENT_CUSTOM, MY_EVENT_REGISTER_ATTEMPT) == SWITCH_STATUS_SUCCESS) {
-			char *contact_params = NULL;
-
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "profile-name", profile->name);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "from-user", to_user);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "from-host", reg_host);
@@ -1671,24 +1656,6 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact", contact_str);
 			if (contact)
 				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "sip-instance", sip_instance);
-
-			if (contact && contact->m_params) {
-				for (const char * const *p = contact->m_params; *p; p++) {
-					if (contact_params) {
-						char *tmp = contact_params;
-						contact_params = switch_mprintf("%s;%s", contact_params, *p);
-						switch_safe_free(tmp);
-					} else {
-						contact_params = switch_mprintf("%s", *p);
-					}
-				}
-			}
-
-			if (contact_params) {
-				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Contact params1: %s\n", contact_params);
-				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "paramsua", "contact_params");
-				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact-params", contact_params);
-			}
 
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "call-id", call_id);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "rpid", rpid);
@@ -1718,8 +1685,6 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
                 break;
             }
 			switch_event_fire(&s_event);
-
-			if (contact_params) switch_safe_free(contact_params);
 		}
 
 		if (contact && exptime && v_event && *v_event) {
