@@ -1501,7 +1501,6 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 		int path_encoded_len = 0;
 
 		get_sip_instance_from_contact(contact, sip_instance, sizeof(sip_instance));
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "sip.instance = '%s'\n", sip_instance);
 
 		if (uparams && switch_stristr("transport=tls", uparams)) {
 			is_tls += 1;
