@@ -5471,7 +5471,7 @@ switch_status_t config_sofia(sofia_config_t reload, char *profile_name)
 					if (!strcasecmp(var, "multiple-registrations")) {
 						if (val && !strcasecmp(val, "call-id")) {
 							sofia_set_pflag(profile, PFLAG_MULTIREG);
-						} else if (val && (!strcasecmp(val, "sip.instance")) {
+						} else if (val && (!strcasecmp(val, "sip.instance"))) {
 							sofia_set_pflag(profile, PFLAG_MULTIREG);
 							sofia_set_pflag(profile, PFLAG_MULTIREG_SIP_INSTANCE);
 						} else if (val && (!strcasecmp(val, "contact") || switch_true(val))) {
