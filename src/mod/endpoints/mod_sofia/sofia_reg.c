@@ -1668,6 +1668,8 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "from-host", reg_host);
 			if (contact)
 				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact", contact_str);
+			if (contact)
+				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "sip-instance", sip_instance);
 
 			if (contact && contact->m_params) {
 				for (const char * const *p = contact->m_params; *p; p++) {
@@ -1893,6 +1895,8 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "from-host", reg_host);
 			if (contact)
 				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact", contact_str);
+			if (contact)
+				switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "sip-instance", sip_instance);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "call-id", call_id);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "rpid", rpid);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "status", reg_desc);
@@ -2148,6 +2152,7 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "from-host", reg_host);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "presence-hosts", profile->presence_hosts ? profile->presence_hosts : "n/a");
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact", contact_str);
+			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "sip-instance", sip_instance);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "call-id", call_id);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "rpid", rpid);
 			switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "status", reg_desc);
@@ -2305,6 +2310,7 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 					switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "from-user", to_user);
 					switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "from-host", reg_host);
 					switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "contact", contact_str);
+					switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "sip-instance", sip_instance);
 					switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "call-id", call_id);
 					switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "rpid", rpid);
 					switch_event_add_header_string(s_event, SWITCH_STACK_BOTTOM, "realm", realm);
