@@ -1317,6 +1317,26 @@ void sofia_reg_close_handles(sofia_profile_t *profile)
 
 }
 
+static size_t get_sip_instance_from_contact(const sip_contact_t *contact, char *buf, size_t bufsize)
+{
+    const char * const *p;
+    if (!contact || !contact->m_params) {
+        buf[0] = '\0';
+        return 0;
+    }
+
+    for (p = contact->m_params; *p; p++) {
+        const char *param = *p;
+        if (!strncmp(param, "+sip.instance=", 14)) {
+            const char *value = param + 14;
+            return switch_snprintf(buf, bufsize, "%s", value);
+        }
+    }
+
+    /* Not found → empty string */
+    buf[0] = '\0';
+    return 0;
+}
 
 uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nua_handle_t *nh, sip_t const *sip,
 								sofia_dispatch_event_t *de, sofia_regtype_t regtype, char *key,
@@ -1343,7 +1363,8 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 	const char *reg_host = profile->reg_db_domain;
 	const char *sub_host = profile->sub_domain;
 	char contact_str[1024] = "";
-	uint8_t multi_reg = 0, multi_reg_contact = 0, avoid_multi_reg = 0;
+	char sip_instance[255] = "";
+	uint8_t multi_reg = 0, multi_reg_contact = 0, avoid_multi_reg = 0, multi_reg_sip_instance = 0;
 	uint8_t stale = 0, forbidden = 0;
 	auth_res_t auth_res = AUTH_OK;
 	long exptime = 300;
@@ -1477,6 +1498,9 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 		const char *contact_host = contact->m_url->url_host;
 		char *path_encoded = NULL;
 		int path_encoded_len = 0;
+
+		get_sip_instance_from_contact(contact, sip_instance, sizeof(sip_instance));
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "sip.instance = '%s'\n", sip_instance);
 
 		if (contact && contact->m_params) {
 			for (const char * const *p = contact->m_params; *p; p++) {
@@ -1968,6 +1992,7 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 	/* Does this profile supports multiple registrations ? */
 	multi_reg = (sofia_test_pflag(profile, PFLAG_MULTIREG)) ? 1 : 0;
 	multi_reg_contact = (sofia_test_pflag(profile, PFLAG_MULTIREG_CONTACT)) ? 1 : 0;
+	multi_reg_sip_instance = (sofia_test_pflag(profile, PFLAG_MULTIREG_SIP_INSTANCE)) ? 1 : 0;
 
 
 	if (multi_reg && avoid_multi_reg) {
@@ -1994,6 +2019,9 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 				if (multi_reg_contact) {
 					sql =
 						switch_mprintf("delete from sip_registrations where sip_user='%q' and sip_host='%q' and contact='%q'", to_user, reg_host, contact_str);
+				} else if (multi_reg_sip_instance) {
+					sql =
+						switch_mprintf("delete from sip_registrations where sip_user='%q' and sip_host='%q' and sip_instance='%q'", to_user, reg_host, sip_instance);
 				} else {
 					sql = switch_mprintf("delete from sip_registrations where call_id='%q'", call_id);
 				}
@@ -2064,12 +2092,12 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 		if (!update_registration) {
 			sql = switch_mprintf("insert into sip_registrations "
 					"(call_id,sip_user,sip_host,presence_hosts,contact,status,rpid,expires,"
-					"user_agent,server_user,server_host,profile_name,hostname,network_ip,network_port,sip_username,sip_realm,"
+					"user_agent,server_user,server_host,profile_name,hostname,network_ip,network_port,sip_username,sip_realm,sip_instance,"
 					"mwi_user,mwi_host, orig_server_host, orig_hostname, sub_host, ping_status, ping_count, ping_expires, force_ping) "
 					"values ('%q','%q', '%q','%q','%q','%q', '%q', %ld, '%q', '%q', '%q', '%q', '%q', '%q', '%q','%q','%q','%q','%q','%q','%q','%q', '%q', %d, %ld, %d)",
 					call_id, to_user, reg_host, profile->presence_hosts ? profile->presence_hosts : "",
 					contact_str, reg_desc, rpid, (long) reg_time + (long) exptime + profile->sip_expires_late_margin,
-					agent, from_user, guess_ip4, profile->name, mod_sofia_globals.hostname, network_ip, network_port_c, username, realm,
+					agent, from_user, guess_ip4, profile->name, mod_sofia_globals.hostname, network_ip, network_port_c, username, realm, sip_instance,
 								 mwi_user, mwi_host, guess_ip4, mod_sofia_globals.hostname, sub_host, "Reachable", 0,
 								 (long) switch_epoch_time_now(NULL) + sofia_reg_uniform_distribution(profile->iping_seconds), force_ping);
 		} else {
@@ -2078,13 +2106,13 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 								 "presence_hosts='%q', server_host='%q', orig_server_host='%q',"
 								 "hostname='%q', orig_hostname='%q',"
 								 "expires = %ld, ping_expires=%ld, force_ping=%d "
-								 "where sip_user='%q' and sip_username='%q' and sip_host='%q' and contact='%q'",
+								 "where sip_user='%q' and sip_username='%q' and sip_host='%q' and contact='%q' and sip_instance='%q'",
 								 call_id, sub_host, network_ip, network_port_c,
 								 profile->presence_hosts ? profile->presence_hosts : "", guess_ip4, guess_ip4,
                                                                  mod_sofia_globals.hostname, mod_sofia_globals.hostname,
 								 (long) reg_time + (long) exptime + profile->sip_expires_late_margin,
 								 (long) switch_epoch_time_now(NULL) + sofia_reg_uniform_distribution(profile->iping_seconds),
-								 force_ping, to_user, username, reg_host, contact_str);
+								 force_ping, to_user, username, reg_host, contact_str, sip_instance);
 		}
 
 		if (sql) {
@@ -2103,6 +2131,8 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 		if (multi_reg) {
 			if (multi_reg_contact) {
 				sql = switch_mprintf("delete from sip_registrations where contact='%q' and expires!=%ld", contact_str, (long) reg_time + (long) exptime + profile->sip_expires_late_margin);
+			} else if (multi_reg_sip_instance) {
+				sql = switch_mprintf("delete from sip_registrations where sip_instance='%q' and expires!=%ld", sip_instance, (long) reg_time + (long) exptime + profile->sip_expires_late_margin);
 			} else {
 				sql = switch_mprintf("delete from sip_registrations where call_id='%q' and expires!=%ld", call_id, (long) reg_time + (long) exptime + profile->sip_expires_late_margin);
 			}
@@ -2183,6 +2213,9 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 			if (multi_reg_contact) {
 				sql =
 					switch_mprintf("delete from sip_registrations where sip_user='%q' and sip_host='%q' and contact='%q'", to_user, reg_host, contact_str);
+			} else if (multi_reg_sip_instance) {
+				sql =
+					switch_mprintf("delete from sip_registrations where sip_user='%q' and sip_host='%q' and sip_instance='%q'", to_user, reg_host, sip_instance);
 			} else {
 				sql = switch_mprintf("delete from sip_registrations where call_id='%q'", call_id);
 			}
