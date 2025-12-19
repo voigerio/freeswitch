@@ -6419,6 +6419,9 @@ struct cb_helper_sip_user_status {
 	char *contact;
 	size_t contact_len;
 
+	char *sip_instance;
+	size_t sip_instance_len;
+
 	int count;
 };
 
@@ -6426,8 +6429,8 @@ int sofia_sip_user_status_callback(void *pArg, int argc, char **argv, char **col
 {
 	struct cb_helper_sip_user_status *cbt = (struct cb_helper_sip_user_status *) pArg;
 
-	if (argc != 3) {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "expected 3 arguments from query, instead got %d\n", argc);
+	if (argc != 4) {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "expected 4 arguments from query, instead got %d\n", argc);
 		return 0;
 	}
 
@@ -6435,6 +6438,7 @@ int sofia_sip_user_status_callback(void *pArg, int argc, char **argv, char **col
 	cbt->count = (argv[1] && switch_is_number(argv[1])) ? atoi(argv[1]) : 0;
 
 	switch_copy_string(cbt->contact, argv[2], cbt->contact_len);
+	switch_copy_string(cbt->sip_instance, argv[3], cbt->sip_instance_len);
 
 	return 1;
 }
@@ -6514,6 +6518,7 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 		struct cb_helper_sip_user_status sip_user_status;
 		char ping_status[255] = "";
 		char sip_contact[1024] = "";
+		char sip_instance[255] = "";
 		int sip_user_ping_min = profile->sip_user_ping_min;
 		int sip_user_ping_max = profile->sip_user_ping_max;
 
@@ -6528,7 +6533,9 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 		sip_user_status.status_len = sizeof(ping_status);
 		sip_user_status.contact = sip_contact;
 		sip_user_status.contact_len = sizeof(sip_contact);
-		sql = switch_mprintf("select ping_status, ping_count, contact from sip_registrations where sip_user='%q' and sip_host='%q' and call_id='%q'",
+		sip_user_status.sip_instance = sip_instance;
+		sip_user_status.sip_instance_len = sizeof(sip_instance);
+		sql = switch_mprintf("select ping_status, ping_count, contact, sip_instance from sip_registrations where sip_user='%q' and sip_host='%q' and call_id='%q'",
 				     sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, call_id);
 		sofia_glue_execute_sql_callback(profile, profile->ireg_mutex, sql, sofia_sip_user_status_callback, &sip_user_status);
 		switch_safe_free(sql);
@@ -6542,7 +6549,7 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 									 sip_user_status.count, ping_time, sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, call_id);
 				sofia_glue_execute_sql(profile, &sql, SWITCH_TRUE);
 				switch_safe_free(sql);
-				sofia_reg_fire_custom_sip_user_ping_state_event(profile, sip_user, sip_user_status.contact, sip->sip_to->a_url->url_user,
+				sofia_reg_fire_custom_sip_user_ping_state_event(profile, sip_user, sip_user_status.contact, sip_user_status.sip_instance, sip->sip_to->a_url->url_user,
 															   sip->sip_to->a_url->url_host, call_id, status, sip_user_status.count, ping_time, phrase);
 			}
 			if (sip_user_status.count < sip_user_ping_min) {
@@ -6553,7 +6560,7 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 										 ping_time, sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, call_id);
 					sofia_glue_execute_sql(profile, &sql, SWITCH_TRUE);
 					switch_safe_free(sql);
-					sofia_reg_fire_custom_sip_user_state_event(profile, sip_user, sip_user_status.contact, sip->sip_to->a_url->url_user,
+					sofia_reg_fire_custom_sip_user_state_event(profile, sip_user, sip_user_status.contact, sip_user_status.sip_instance, sip->sip_to->a_url->url_user,
 															   sip->sip_to->a_url->url_host, call_id, SOFIA_REG_REACHABLE, status, phrase);
 
 					if (sofia_test_pflag(profile, PFLAG_UNREG_OPTIONS_FAIL)) {
@@ -6577,7 +6584,7 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 									 sip_user_status.count, ping_time, sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, call_id);
 				sofia_glue_execute_sql(profile, &sql, SWITCH_TRUE);
 				switch_safe_free(sql);
-				sofia_reg_fire_custom_sip_user_ping_state_event(profile, sip_user, sip_user_status.contact, sip->sip_to->a_url->url_user,
+				sofia_reg_fire_custom_sip_user_ping_state_event(profile, sip_user, sip_user_status.contact, sip_user_status.sip_instance, sip->sip_to->a_url->url_user,
 															   sip->sip_to->a_url->url_host, call_id, status, sip_user_status.count, ping_time, phrase);
 			}
 			if (sip_user_status.count >= sip_user_ping_min) {
@@ -6588,7 +6595,7 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 							     sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, call_id);
 					sofia_glue_execute_sql(profile, &sql, SWITCH_TRUE);
 					switch_safe_free(sql);
-					sofia_reg_fire_custom_sip_user_state_event(profile, sip_user, sip_user_status.contact, sip->sip_to->a_url->url_user,
+					sofia_reg_fire_custom_sip_user_state_event(profile, sip_user, sip_user_status.contact, sip_user_status.sip_instance, sip->sip_to->a_url->url_user,
 															   sip->sip_to->a_url->url_host, call_id, SOFIA_REG_UNREACHABLE, status, phrase);
 				}
 			}
