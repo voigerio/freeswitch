@@ -220,6 +220,7 @@ typedef enum {
 	PFLAG_AUTH_ALL,
 	PFLAG_FULL_ID,
 	PFLAG_MULTIREG_CONTACT,
+	PFLAG_MULTIREG_SIP_INSTANCE,
 	PFLAG_DISABLE_TRANSCODING,
 	PFLAG_RUNNING,
 	PFLAG_RESPAWN,
@@ -1249,9 +1250,9 @@ switch_status_t sip_dig_function(_In_opt_z_ const char *cmd, _In_opt_ switch_cor
 const char *sofia_gateway_status_name(sofia_gateway_status_t status);
 void sofia_reg_fire_custom_gateway_state_event(sofia_gateway_t *gateway, int status, const char *phrase);
 const char *sofia_sip_user_status_name(sofia_sip_user_status_t status);
-void sofia_reg_fire_custom_sip_user_state_event(sofia_profile_t *profile, const char *sip_user, const char *contact,
+void sofia_reg_fire_custom_sip_user_state_event(sofia_profile_t *profile, const char *sip_user, const char *contact, const char *sip_instance,
 							const char* from_user, const char* from_host, const char *call_id, sofia_sip_user_status_t status, int options_res, const char *phrase);
-void sofia_reg_fire_custom_sip_user_ping_state_event(sofia_profile_t *profile, const char *sip_user, const char *contact,
+void sofia_reg_fire_custom_sip_user_ping_state_event(sofia_profile_t *profile, const char *sip_user, const char *contact, const char *sip_instance,
 							const char* from_user, const char* from_host, const char *call_id, int options_res, int ping_count, int ping_time, const char *phrase);
 uint32_t sofia_reg_reg_count(sofia_profile_t *profile, const char *user, const char *host);
 char *sofia_media_get_multipart(switch_core_session_t *session, const char *prefix, const char *sdp, char **mp_type);
