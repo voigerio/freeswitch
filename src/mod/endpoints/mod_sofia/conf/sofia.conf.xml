@@ -213,7 +213,7 @@
         <!-- <param name="max-recv-requests-per-second" value="0"/> -->
         <!-- session timers for all call to expire after the specified seconds -->
         <!-- <param name="session-timeout" value="1800"/> -->
-        <!-- Can be 'true' or 'contact' -->
+        <!-- Can be 'true', 'contact' or 'sip.instance' -->
         <!-- <param name="multiple-registrations" value="contact"/> -->
         <!-- set to 'greedy' if you want your codec list to take precedence -->
         <param name="inbound-codec-negotiation" value="generous"/>
