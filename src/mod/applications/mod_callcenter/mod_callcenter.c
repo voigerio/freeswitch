@@ -3347,41 +3347,123 @@ static int update_external_calls_count_sql_callback(void *pArg, int argc, char *
 	return 0;
 }
 
+/* Helper function to untrack a single agent - decrements external_calls_count and updates state if needed */
+static void cc_untrack_agent_internal(switch_core_session_t *session, const char *agent_name)
+{
+	char *sql = NULL;
+	agent_update_external_calls_count_result_t result;
+
+	if (zstr(agent_name)) {
+		return;
+	}
+
+	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Untracking agent %s\n", agent_name);
+
+	sql = switch_mprintf("UPDATE agents SET external_calls_count = external_calls_count - 1 WHERE name = '%q' RETURNING external_calls_count, status", agent_name);
+
+	memset(&result, 0, sizeof(result));
+	cc_execute_sql_callback(NULL, NULL, sql, update_external_calls_count_sql_callback, &result);
+	switch_safe_free(sql);
+
+	if (!result.found) {
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Agent %s not found or no row returned, not updating state\n", agent_name);
+		return;
+	}
+
+	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "Agent %s: new external_calls_count=%d, status=%s\n", agent_name, result.external_calls_count, result.status);
+
+	if (result.external_calls_count < 1) {
+		/* If we are in Status Available On Demand, set state to Idle so we do not receive another call until state manually changed to Waiting */
+		if (!strcasecmp(cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE_ON_DEMAND), result.status)) {
+			cc_agent_update("state", cc_agent_state2str(CC_AGENT_STATE_IDLE), agent_name);
+		} else {
+			cc_agent_update("state", cc_agent_state2str(CC_AGENT_STATE_WAITING), agent_name);
+		}
+	}
+}
+
+/* Helper function to track a single agent - increments external_calls_count and sets state */
+static switch_bool_t cc_track_agent_internal(switch_core_session_t *session, const char *agent_name)
+{
+	char agent_status[255];
+	char *sql = NULL;
+	char res[256] = "";
+
+	if (zstr(agent_name)) {
+		return SWITCH_FALSE;
+	}
+
+	if (cc_agent_get("status", agent_name, agent_status, sizeof(agent_status)) != CC_STATUS_SUCCESS) {
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Invalid agent %s\n", agent_name);
+		return SWITCH_FALSE;
+	}
+
+	sql = switch_mprintf("UPDATE agents SET external_calls_count = external_calls_count + 1 WHERE name = '%q' RETURNING external_calls_count", agent_name);
+	cc_execute_sql2str(NULL, NULL, sql, res, sizeof(res));
+	switch_safe_free(sql);
+
+	if (!zstr(res)) {
+		cc_agent_update("state", cc_agent_state2str(CC_AGENT_STATE_IN_AN_EXTERNAL_CALL), agent_name);
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Tracking agent %s, external_calls_count=%s\n", agent_name, res);
+		return SWITCH_TRUE;
+	} else {
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "No agent row updated for %s\n", agent_name);
+		return SWITCH_FALSE;
+	}
+}
+
+/* Helper function to check if an agent is already in the tracked list */
+static switch_bool_t cc_is_agent_tracked(const char *tracked_agents, const char *agent_name)
+{
+	char *agents_dup = NULL;
+	char *argv[128] = { 0 };
+	int argc, i;
+	switch_bool_t found = SWITCH_FALSE;
+
+	if (zstr(tracked_agents) || zstr(agent_name)) {
+		return SWITCH_FALSE;
+	}
+
+	agents_dup = switch_safe_strdup(tracked_agents);
+	argc = switch_separate_string(agents_dup, ',', argv, (sizeof(argv) / sizeof(argv[0])));
+
+	for (i = 0; i < argc; i++) {
+		if (!zstr(argv[i]) && !strcmp(argv[i], agent_name)) {
+			found = SWITCH_TRUE;
+			break;
+		}
+	}
+
+	switch_safe_free(agents_dup);
+	return found;
+}
+
 static switch_status_t cc_hook_state_run(switch_core_session_t *session)
 {
 	switch_channel_t *channel = switch_core_session_get_channel(session);
 	switch_channel_state_t state = switch_channel_get_state(channel);
-	const char *agent_name = NULL;
-	char *sql = NULL;
-	agent_update_external_calls_count_result_t result;
+	const char *tracked_agents = NULL;
+	char *agents_dup = NULL;
+	char *argv[128] = { 0 };
+	int argc, i;
 
-	agent_name = switch_channel_get_variable(channel, "cc_tracked_agent");
-	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Called cc_hook_hanguphook channel %s with state %s", switch_channel_get_name(channel), switch_channel_state_name(state));
+	tracked_agents = switch_channel_get_variable(channel, "cc_tracked_agent");
+	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Called cc_hook_state_run channel %s with state %s\n", switch_channel_get_name(channel), switch_channel_state_name(state));
 
 	if (state == CS_HANGUP) {
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Tracked call for agent %s ended, decreasing external_calls_count", agent_name);
-		sql = switch_mprintf("UPDATE agents SET external_calls_count = external_calls_count - 1 WHERE name = '%q' RETURNING external_calls_count, status", agent_name);
+		if (!zstr(tracked_agents)) {
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Tracked call ended, untracking agents: %s\n", tracked_agents);
 
-		memset(&result, 0, sizeof(result));
+			agents_dup = switch_safe_strdup(tracked_agents);
+			argc = switch_separate_string(agents_dup, ',', argv, (sizeof(argv) / sizeof(argv[0])));
 
-		cc_execute_sql_callback(NULL, NULL, sql, update_external_calls_count_sql_callback, &result);
-
-		switch_safe_free(sql);
-
-		if (!result.found) {
-			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Agent %s not found or no row returned, not updating state", agent_name);
-			return SWITCH_STATUS_SUCCESS;
-		}
-
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "Agent %s: new external_calls_count=%d, status=%s\n", agent_name, result.external_calls_count, result.status);
-
-		if (result.external_calls_count < 1) {
-			/* If we are in Status Available On Demand, set state to Idle so we do not receive another call until state manually changed to Waiting */
-			if (!strcasecmp(cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE_ON_DEMAND), result.status)) {
-				cc_agent_update("state", cc_agent_state2str(CC_AGENT_STATE_IDLE), agent_name);
-			} else {
-				cc_agent_update("state", cc_agent_state2str(CC_AGENT_STATE_WAITING), agent_name);
+			for (i = 0; i < argc; i++) {
+				if (!zstr(argv[i])) {
+					cc_untrack_agent_internal(session, argv[i]);
+				}
 			}
+
+			switch_safe_free(agents_dup);
 		}
 
 		switch_core_event_hook_remove_state_run(session, cc_hook_state_run);
@@ -3391,45 +3473,194 @@ static switch_status_t cc_hook_state_run(switch_core_session_t *session)
 	return SWITCH_STATUS_SUCCESS;
 }
 
+/* Helper to untrack all currently tracked agents and clear the variable */
+static void cc_untrack_all_agents(switch_core_session_t *session, switch_channel_t *channel)
+{
+	const char *tracked_agents = switch_channel_get_variable(channel, "cc_tracked_agent");
+	char *agents_dup = NULL;
+	char *argv[128] = { 0 };
+	int argc, i;
+
+	if (zstr(tracked_agents)) {
+		return;
+	}
+
+	agents_dup = switch_safe_strdup(tracked_agents);
+	argc = switch_separate_string(agents_dup, ',', argv, (sizeof(argv) / sizeof(argv[0])));
+
+	for (i = 0; i < argc; i++) {
+		if (!zstr(argv[i])) {
+			cc_untrack_agent_internal(session, argv[i]);
+		}
+	}
+
+	switch_safe_free(agents_dup);
+	switch_channel_set_variable(channel, "cc_tracked_agent", NULL);
+}
+
+/* Helper to remove a specific agent from the tracked list */
+static void cc_untrack_specific_agent(switch_core_session_t *session, switch_channel_t *channel, const char *agent_to_remove)
+{
+	const char *tracked_agents = switch_channel_get_variable(channel, "cc_tracked_agent");
+	char *agents_dup = NULL;
+	char *argv[128] = { 0 };
+	int argc, i;
+	char *new_list = NULL;
+	switch_bool_t found = SWITCH_FALSE;
+
+	if (zstr(tracked_agents) || zstr(agent_to_remove)) {
+		return;
+	}
+
+	agents_dup = switch_safe_strdup(tracked_agents);
+	argc = switch_separate_string(agents_dup, ',', argv, (sizeof(argv) / sizeof(argv[0])));
+
+	for (i = 0; i < argc; i++) {
+		if (!zstr(argv[i])) {
+			if (!strcmp(argv[i], agent_to_remove)) {
+				cc_untrack_agent_internal(session, argv[i]);
+				found = SWITCH_TRUE;
+			} else {
+				/* Keep this agent in the list */
+				if (new_list) {
+					char *tmp = new_list;
+					new_list = switch_mprintf("%s,%s", tmp, argv[i]);
+					switch_safe_free(tmp);
+				} else {
+					new_list = switch_safe_strdup(argv[i]);
+				}
+			}
+		}
+	}
+
+	switch_safe_free(agents_dup);
+
+	if (!found) {
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Agent %s was not being tracked\n", agent_to_remove);
+	}
+
+	/* Update the channel variable with the new list (or clear if empty) */
+	switch_channel_set_variable(channel, "cc_tracked_agent", new_list);
+	switch_safe_free(new_list);
+}
+
+/* Helper to append an agent to the tracked list */
+static void cc_append_tracked_agent(switch_core_session_t *session, switch_channel_t *channel, const char *agent_name)
+{
+	const char *tracked_agents = switch_channel_get_variable(channel, "cc_tracked_agent");
+	char *new_list = NULL;
+
+	if (cc_is_agent_tracked(tracked_agents, agent_name)) {
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Agent %s is already being tracked\n", agent_name);
+		return;
+	}
+
+	if (!cc_track_agent_internal(session, agent_name)) {
+		return;
+	}
+
+	if (!zstr(tracked_agents)) {
+		new_list = switch_mprintf("%s,%s", tracked_agents, agent_name);
+		switch_channel_set_variable(channel, "cc_tracked_agent", new_list);
+		switch_safe_free(new_list);
+	} else {
+		switch_channel_set_variable(channel, "cc_tracked_agent", agent_name);
+	}
+
+	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Appended agent %s to tracking list\n", agent_name);
+}
+
+/*
+ * callcenter_track application
+ *
+ * Usage:
+ *   callcenter_track agent_ref     - Clears any previously tracked agents and tracks the new one
+ *   callcenter_track +agent_ref    - Appends agent to tracking list (does not clear existing)
+ *   callcenter_track -             - Clears all tracked agents
+ *   callcenter_track -agent_ref    - Removes only the specified agent from tracking
+ */
 SWITCH_STANDARD_APP(callcenter_track)
 {
 	switch_channel_t *channel = switch_core_session_get_channel(session);
-	char agent_status[255];
-	char *agent_name = NULL;
-	char *sql = NULL;
-	char res[256] = "";
+	const char *tracked_agents = NULL;
+	switch_bool_t hook_added = SWITCH_FALSE;
 
 	if (zstr(data)) {
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Missing agent name\n");
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Missing agent name. Usage: callcenter_track [+|-]agent_name or callcenter_track -\n");
 		return;
 	}
 
-	if (cc_agent_get("status", data, agent_status, sizeof(agent_status)) != CC_STATUS_SUCCESS) {
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Invalid agent %s", data);
+	tracked_agents = switch_channel_get_variable(channel, "cc_tracked_agent");
+	hook_added = !zstr(tracked_agents);
+
+	if (!strcmp(data, "-")) {
+		/* Clear all tracked agents */
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Clearing all tracked agents\n");
+		cc_untrack_all_agents(session, channel);
+
+		if (hook_added) {
+			switch_core_event_hook_remove_state_run(session, cc_hook_state_run);
+			UNPROTECT_INTERFACE(app_interface);
+		}
 		return;
 	}
 
-	agent_name = switch_safe_strdup(data);
+	if (data[0] == '-') {
+		/* Remove specific agent: -agent_ref */
+		const char *agent_name = data + 1;
 
-	switch_channel_set_variable(channel, "cc_tracked_agent", agent_name);
+		if (zstr(agent_name)) {
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Missing agent name after '-'\n");
+			return;
+		}
 
-	sql = switch_mprintf("UPDATE agents SET external_calls_count = external_calls_count + 1 WHERE name = '%q' RETURNING external_calls_count", agent_name);
-	cc_execute_sql2str(NULL, NULL, sql, res, sizeof(res));
-	switch_safe_free(sql);
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Removing agent %s from tracking\n", agent_name);
+		cc_untrack_specific_agent(session, channel, agent_name);
 
-	if (!zstr(res)) {
-		cc_agent_update("state", cc_agent_state2str(CC_AGENT_STATE_IN_AN_EXTERNAL_CALL), agent_name);
-	} else {
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING,
-						"No agent row updated for %s\n", agent_name);
+		/* Check if we still have any tracked agents */
+		tracked_agents = switch_channel_get_variable(channel, "cc_tracked_agent");
+		if (zstr(tracked_agents) && hook_added) {
+			switch_core_event_hook_remove_state_run(session, cc_hook_state_run);
+			UNPROTECT_INTERFACE(app_interface);
+		}
+		return;
 	}
 
-	switch_core_event_hook_add_state_run(session, cc_hook_state_run);
-	PROTECT_INTERFACE(app_interface);
-	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Tracking this call for agent %s", data);
-	switch_safe_free(agent_name);
+	if (data[0] == '+') {
+		/* Append agent: +agent_ref */
+		const char *agent_name = data + 1;
 
-	return;
+		if (zstr(agent_name)) {
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Missing agent name after '+'\n");
+			return;
+		}
+
+		cc_append_tracked_agent(session, channel, agent_name);
+
+		/* Add hook if this is the first tracked agent */
+		if (!hook_added) {
+			switch_core_event_hook_add_state_run(session, cc_hook_state_run);
+			PROTECT_INTERFACE(app_interface);
+		}
+		return;
+	}
+
+	/* Default: clear existing and set new agent */
+	if (hook_added) {
+		cc_untrack_all_agents(session, channel);
+	}
+
+	if (!cc_track_agent_internal(session, data)) {
+		return;
+	}
+
+	switch_channel_set_variable(channel, "cc_tracked_agent", data);
+	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Tracking agent %s (replaced previous)\n", data);
+
+	if (!hook_added) {
+		switch_core_event_hook_add_state_run(session, cc_hook_state_run);
+		PROTECT_INTERFACE(app_interface);
+	}
 }
 
 static void cc_send_presence(const char *queue_name) {
