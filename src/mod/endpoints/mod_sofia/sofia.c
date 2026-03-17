@@ -6539,16 +6539,17 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 
 		if (status != 200 && status != 486) {
 			sip_user_status.count--;
-			if (sip_user_status.count >= 0) {
-				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Ping to sip user '%s@%s' failed with code %d - count %d, state %s\n",
-						  sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, status, sip_user_status.count, sip_user_status.status);
-				sql = switch_mprintf("update sip_registrations set ping_count=%d, ping_time=%d where sip_user='%q' and sip_host='%q' and call_id='%q'",
-									 sip_user_status.count, ping_time, sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, call_id);
-				sofia_glue_execute_sql(profile, &sql, SWITCH_TRUE);
-				switch_safe_free(sql);
-				sofia_reg_fire_custom_sip_user_ping_state_event(profile, sip_user, sip_user_status.contact, sip_user_status.sip_instance, sip->sip_to->a_url->url_user,
-															   sip->sip_to->a_url->url_host, call_id, status, sip_user_status.count, ping_time, phrase);
+			if (sip_user_status.count < 0) {
+				sip_user_status.count = 0;
 			}
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Ping to sip user '%s@%s' failed with code %d - count %d, state %s\n",
+					  sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, status, sip_user_status.count, sip_user_status.status);
+			sql = switch_mprintf("update sip_registrations set ping_count=%d, ping_time=%d where sip_user='%q' and sip_host='%q' and call_id='%q'",
+								 sip_user_status.count, ping_time, sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, call_id);
+			sofia_glue_execute_sql(profile, &sql, SWITCH_TRUE);
+			switch_safe_free(sql);
+			sofia_reg_fire_custom_sip_user_ping_state_event(profile, sip_user, sip_user_status.contact, sip_user_status.sip_instance, sip->sip_to->a_url->url_user,
+														   sip->sip_to->a_url->url_host, call_id, status, sip_user_status.count, ping_time, phrase);
 			if (sip_user_status.count < sip_user_ping_min) {
 				if (strcmp(sip_user_status.status, "Unreachable")) {
 					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Sip user '%s@%s' is now Unreachable\n",
@@ -6574,16 +6575,17 @@ static void sofia_handle_sip_r_options(switch_core_session_t *session, int statu
 			}
 		} else {
 			sip_user_status.count++;
-			if (sip_user_status.count <= sip_user_ping_max) {
-				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Ping to sip user '%s@%s' succeeded with code %d - count %d, state %s\n",
-						  sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, status, sip_user_status.count, sip_user_status.status);
-				sql = switch_mprintf("update sip_registrations set ping_count=%d, ping_time=%d where sip_user='%q' and sip_host='%q' and call_id='%q'",
-									 sip_user_status.count, ping_time, sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, call_id);
-				sofia_glue_execute_sql(profile, &sql, SWITCH_TRUE);
-				switch_safe_free(sql);
-				sofia_reg_fire_custom_sip_user_ping_state_event(profile, sip_user, sip_user_status.contact, sip_user_status.sip_instance, sip->sip_to->a_url->url_user,
-															   sip->sip_to->a_url->url_host, call_id, status, sip_user_status.count, ping_time, phrase);
+			if (sip_user_status.count > sip_user_ping_max) {
+				sip_user_status.count = sip_user_ping_max;
 			}
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Ping to sip user '%s@%s' succeeded with code %d - count %d, state %s\n",
+					  sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, status, sip_user_status.count, sip_user_status.status);
+			sql = switch_mprintf("update sip_registrations set ping_count=%d, ping_time=%d where sip_user='%q' and sip_host='%q' and call_id='%q'",
+								 sip_user_status.count, ping_time, sip->sip_to->a_url->url_user, sip->sip_to->a_url->url_host, call_id);
+			sofia_glue_execute_sql(profile, &sql, SWITCH_TRUE);
+			switch_safe_free(sql);
+			sofia_reg_fire_custom_sip_user_ping_state_event(profile, sip_user, sip_user_status.contact, sip_user_status.sip_instance, sip->sip_to->a_url->url_user,
+														   sip->sip_to->a_url->url_host, call_id, status, sip_user_status.count, ping_time, phrase);
 			if (sip_user_status.count >= sip_user_ping_min) {
 				if (strcmp(sip_user_status.status, "Reachable")) {
 					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Sip user '%s@%s' is now Reachable\n",
