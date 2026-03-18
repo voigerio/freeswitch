@@ -74,6 +74,17 @@ void mod_amqp_producer_event_handler(switch_event_t* evt)
 	mod_amqp_producer_profile_t *profile = (mod_amqp_producer_profile_t *)evt->bind_user_data;
 	switch_time_t now = switch_time_now();
 	switch_time_t reset_time;
+	const char *event_seq = switch_event_get_header(evt, "Event-Sequence");
+	const char *event_name = switch_event_get_header(evt, "Event-Name");
+	const char *event_subclass = switch_event_get_header(evt, "Event-Subclass");
+
+	switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG,
+		"AMQP handler called: profile=%p(%s) event=%s subclass=%s seq=%s\n",
+		(void *)profile,
+		profile ? profile->name : "NULL",
+		event_name ? event_name : "unknown",
+		event_subclass ? event_subclass : "none",
+		event_seq ? event_seq : "unknown");
 
 	if (!profile) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Event without a profile %p %p\n", (void *)evt, (void *)evt->event_user_data);
@@ -350,7 +361,15 @@ switch_status_t mod_amqp_producer_create(char *name, switch_xml_t cfg)
 	}
 
 	/* Subscribe events */
+	switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "Profile[%s] registering %d event subscription(s)\n",
+		profile->name, profile->event_subscriptions);
 	for (i = 0; i < profile->event_subscriptions; i++) {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,
+			"Profile[%s] binding subscription[%d]: event_id=%d subclass=%s node_ptr=%p\n",
+			profile->name, i,
+			(int)profile->events[i].id,
+			profile->events[i].subclass ? profile->events[i].subclass : "(any)",
+			(void *)&(profile->event_nodes[i]));
 		if (switch_event_bind_removable("AMQP",
 										profile->events[i].id,
 										profile->events[i].subclass,
@@ -361,6 +380,9 @@ switch_status_t mod_amqp_producer_create(char *name, switch_xml_t cfg)
 			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Cannot bind to event handler %d!\n",(int)profile->events[i].id);
 			goto err;
 		}
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO,
+			"Profile[%s] bound subscription[%d]: node=%p\n",
+			profile->name, i, (void *)profile->event_nodes[i]);
 	}
 
 	if ( switch_core_hash_insert(mod_amqp_globals.producer_hash, name, (void *) profile) != SWITCH_STATUS_SUCCESS) {
