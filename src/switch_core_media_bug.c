@@ -278,6 +278,21 @@ SWITCH_DECLARE(switch_status_t) switch_core_media_bug_read(switch_media_bug_t *b
 		switch_mutex_unlock(bug->write_mutex);
 	}
 
+	/* In stereo mode pre-bridge, the write side can mirror the read side
+	 * (echo / sidetone / loopback), which would duplicate the caller's audio
+	 * onto the right channel. Drop the write capture until the channel is
+	 * bridged so the right channel stays silent. */
+	if (switch_test_flag(bug, SMBF_STEREO) && has_write
+		&& !switch_channel_test_flag(bug->session->channel, CF_BRIDGED)) {
+		if (do_write) {
+			switch_mutex_lock(bug->write_mutex);
+			switch_buffer_zero(bug->raw_write_buffer);
+			switch_mutex_unlock(bug->write_mutex);
+			do_write = 0;
+		}
+		has_write = 0;
+	}
+
 
 	if (bug->record_frame_size && bug->record_pre_buffer_max && (do_read || do_write) && bug->record_pre_buffer_count < bug->record_pre_buffer_max) {
 		bug->record_pre_buffer_count++;
