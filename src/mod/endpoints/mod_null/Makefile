@@ -1,0 +1,22 @@
+MODNAME = mod_null.so
+MODOBJ  = mod_null.o
+
+CC      = gcc
+CFLAGS  = -fPIC -g -ggdb -Wall -Werror `pkg-config --cflags freeswitch`
+LDFLAGS = `pkg-config --libs freeswitch`
+
+all: $(MODNAME)
+
+$(MODNAME): $(MODOBJ)
+	$(CC) -shared -o $@ $(MODOBJ) $(LDFLAGS)
+
+.c.o:
+	$(CC) $(CFLAGS) -o $@ -c $<
+
+clean:
+	rm -f $(MODNAME) $(MODOBJ)
+
+install: $(MODNAME)
+	cp $(MODNAME) `pkg-config --variable=moduledir freeswitch`
+
+.PHONY: all clean install
