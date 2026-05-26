@@ -26,16 +26,27 @@ only synthetic option is `loopback/`, which:
 
 ## Build
 
+### In-tree (with the FreeSWITCH source build)
+
+`mod_null` ships with a `Makefile.am` and is registered in
+`build/modules.conf.in` and `configure.ac`. To enable it, uncomment the
+`endpoints/mod_null` line in `build/modules.conf.in` (or `sed` it in your
+build pipeline) and run the normal FreeSWITCH build.
+
+### Out-of-tree (standalone)
+
 Requires a FreeSWITCH dev install whose `pkg-config` is on your `PATH`.
 
 ```sh
 cd src/mod/endpoints/mod_null
-make
-sudo make install     # copies mod_null.so to FreeSWITCH's moduledir
+make -f Makefile.standalone
+sudo make -f Makefile.standalone install   # copies mod_null.so to moduledir
 ```
 
 `make install` resolves the module directory via
-`pkg-config --variable=moduledir freeswitch`.
+`pkg-config --variable=moduledir freeswitch`. `Makefile.standalone` is
+named that way so it doesn't clash with the `Makefile` that autotools
+generates from `Makefile.am` during the in-tree build.
 
 ## Load
 

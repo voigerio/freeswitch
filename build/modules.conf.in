@@ -90,6 +90,7 @@ dialplans/mod_dialplan_xml
 #endpoints/mod_h323
 #endpoints/mod_khomp
 endpoints/mod_loopback
+#endpoints/mod_null
 #endpoints/mod_opal
 #endpoints/mod_portaudio
 endpoints/mod_rtc
