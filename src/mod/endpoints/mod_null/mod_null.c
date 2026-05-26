@@ -57,20 +57,11 @@ static switch_status_t channel_on_init(switch_core_session_t *session)
 	switch_channel_set_flag(channel, CF_AUDIO);
 	switch_channel_set_flag(channel, CF_ACCEPT_CNG);
 
-	switch_channel_set_state(channel, CS_ROUTING);
-	return SWITCH_STATUS_SUCCESS;
-}
-
-static switch_status_t channel_on_routing(switch_core_session_t *session)
-{
-	/* Belt-and-braces: explicitly drive CS_ROUTING -> CS_EXECUTE so that an
-	   `originate null/... &app()` always reaches the inline application. */
-	switch_channel_set_state(switch_core_session_get_channel(session), CS_EXECUTE);
-	return SWITCH_STATUS_SUCCESS;
-}
-
-static switch_status_t channel_on_execute(switch_core_session_t *session)
-{
+	/* Returning SUCCESS without changing state lets the core's standard INIT
+	   handler advance us to CS_ROUTING. The standard ROUTING handler will
+	   then attach the inline &app() (queued by originate) as the caller
+	   extension before transitioning to CS_EXECUTE -- calling set_state
+	   here would skip that, leaving CS_EXECUTE with no extension to run. */
 	return SWITCH_STATUS_SUCCESS;
 }
 
@@ -92,21 +83,6 @@ static switch_status_t channel_on_destroy(switch_core_session_t *session)
 		switch_core_codec_destroy(&tech_pvt->write_codec);
 	}
 
-	return SWITCH_STATUS_SUCCESS;
-}
-
-static switch_status_t channel_on_exchange_media(switch_core_session_t *session)
-{
-	return SWITCH_STATUS_SUCCESS;
-}
-
-static switch_status_t channel_on_soft_execute(switch_core_session_t *session)
-{
-	return SWITCH_STATUS_SUCCESS;
-}
-
-static switch_status_t channel_on_consume_media(switch_core_session_t *session)
-{
 	return SWITCH_STATUS_SUCCESS;
 }
 
@@ -380,12 +356,12 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 
 static switch_state_handler_table_t null_state_handlers = {
 	/*.on_init           */ channel_on_init,
-	/*.on_routing        */ channel_on_routing,
-	/*.on_execute        */ channel_on_execute,
+	/*.on_routing        */ NULL,
+	/*.on_execute        */ NULL,
 	/*.on_hangup         */ NULL,
-	/*.on_exchange_media */ channel_on_exchange_media,
-	/*.on_soft_execute   */ channel_on_soft_execute,
-	/*.on_consume_media  */ channel_on_consume_media,
+	/*.on_exchange_media */ NULL,
+	/*.on_soft_execute   */ NULL,
+	/*.on_consume_media  */ NULL,
 	/*.on_hibernate      */ NULL,
 	/*.on_reset          */ NULL,
 	/*.on_park           */ NULL,
