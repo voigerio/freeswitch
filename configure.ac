@@ -2107,12 +2107,12 @@ AC_CONFIG_FILES([Makefile
 		src/mod/endpoints/mod_alsa/Makefile
 		src/mod/endpoints/mod_h323/Makefile
 		src/mod/endpoints/mod_loopback/Makefile
-		src/mod/endpoints/mod_null/Makefile
 		src/mod/endpoints/mod_opal/Makefile
 		src/mod/endpoints/mod_reference/Makefile
 		src/mod/endpoints/mod_rtmp/Makefile
 		src/mod/endpoints/mod_skinny/Makefile
 		src/mod/endpoints/mod_sofia/Makefile
+		src/mod/endpoints/mod_synth/Makefile
 		src/mod/endpoints/mod_rtc/Makefile
 		src/mod/endpoints/mod_verto/Makefile
 		src/mod/event_handlers/mod_amqp/Makefile
