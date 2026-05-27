@@ -1,19 +1,26 @@
 /*
  * mod_null.c -- Minimal null endpoint for FreeSWITCH
  *
- * Originating null/<destination> creates a synthetic channel that:
+ * Originating null/<name> creates a synthetic channel that:
  *   - is instantly answerable,
  *   - feeds 20ms L16/8000 silence frames on read (timer-paced),
  *   - accepts and discards all write frames,
  *   - works with any dialplan application that needs a real channel.
  *
- * The destination string after "null/" is stored in the channel variable
- * "null_destination". If it contains "://" it is also copied to "hold_music"
- * so bridge/park/hold flows pick it up. mod_callcenter has its own MOH
- * mechanism (cc_moh_override / queue config), independent of this.
+ * The string after "null/" is used only as the channel name; the module
+ * sets no channel variables of its own from it.
  *
- *   originate null/local_stream://moh &callcenter(my_queue)
- *   originate null/test                &park()
+ * Optional channel variables (settable via [key=value] originate prefix):
+ *   null_playback=<path>    play this file/stream from the null side instead
+ *                           of silence; loops on EOF. Accepts any path the FS
+ *                           file API can open (file paths, local_stream://,
+ *                           silence_stream://, tone_stream://, etc.).
+ *   null_timeout=<seconds>  hang up the channel after N seconds regardless of
+ *                           bridge state.
+ *
+ *   originate null/test &park()
+ *   originate [null_playback=local_stream://moh]null/test &callcenter(my_queue)
+ *   originate [null_timeout=30,null_playback=/tmp/hello.wav]null/test &bridge(user/1000)
  *   originate null/test 1000 XML default
  *
  * Patterned after the null sub-endpoint inside mod_loopback.c.
@@ -43,7 +50,15 @@ struct private_object {
 	uint8_t                  databuf[SWITCH_RECOMMENDED_BUFFER_SIZE];
 	switch_mutex_t          *mutex;
 	uint32_t                 flags;
-	char                    *destination;
+
+	/* Optional playback source -- when open, channel_read_frame returns audio
+	   from this file instead of zeroed silence, looping on EOF. */
+	switch_file_handle_t     fh;
+	int                      playback_open;
+
+	/* Optional hard deadline in microseconds (0 = disabled). When the wall
+	   clock crosses this point, channel_read_frame hangs up the channel. */
+	switch_time_t            deadline_us;
 };
 typedef struct private_object private_t;
 
@@ -73,6 +88,10 @@ static switch_status_t channel_on_destroy(switch_core_session_t *session)
 		return SWITCH_STATUS_SUCCESS;
 	}
 
+	if (tech_pvt->playback_open) {
+		switch_core_file_close(&tech_pvt->fh);
+		tech_pvt->playback_open = 0;
+	}
 	if (tech_pvt->timer.timer_interface) {
 		switch_core_timer_destroy(&tech_pvt->timer);
 	}
@@ -162,10 +181,50 @@ static switch_status_t channel_read_frame(switch_core_session_t *session, switch
 		return SWITCH_STATUS_FALSE;
 	}
 
+	/* Hard deadline (null_timeout). Checked here because read_frame fires
+	   every 20 ms whether the channel is parked, bridged, or running an
+	   inline app -- so a single check suffices for all of them. */
+	if (tech_pvt->deadline_us && switch_micro_time_now() >= tech_pvt->deadline_us) {
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO,
+						  "mod_null: null_timeout reached, hanging up\n");
+		switch_channel_hangup(channel, SWITCH_CAUSE_ALLOTTED_TIMEOUT);
+		return SWITCH_STATUS_FALSE;
+	}
+
 	tech_pvt->read_frame.flags   = SFF_NONE;
-	tech_pvt->read_frame.datalen = 320;  /* 160 samples * 2 bytes (L16) */
-	tech_pvt->read_frame.samples = 160;
 	tech_pvt->read_frame.codec   = &tech_pvt->read_codec;
+
+	if (tech_pvt->playback_open) {
+		switch_size_t samples = 160;
+
+		if (switch_core_file_read(&tech_pvt->fh, tech_pvt->databuf, &samples) != SWITCH_STATUS_SUCCESS
+			|| samples == 0) {
+			/* EOF or read error -- try to loop by seeking to start. */
+			unsigned int pos = 0;
+			samples = 160;
+			if (switch_core_file_seek(&tech_pvt->fh, &pos, 0, SWITCH_SEEK_SET) != SWITCH_STATUS_SUCCESS
+				|| switch_core_file_read(&tech_pvt->fh, tech_pvt->databuf, &samples) != SWITCH_STATUS_SUCCESS
+				|| samples == 0) {
+				/* Looping failed -- fall back to silence for this tick and
+				   subsequent ones. */
+				memset(tech_pvt->databuf, 0, 320);
+				samples = 160;
+			}
+		}
+
+		/* Pad short reads with silence so every frame is exactly 20 ms. */
+		if (samples < 160) {
+			memset(tech_pvt->databuf + (samples * 2), 0, (160 - samples) * 2);
+			samples = 160;
+		}
+
+		tech_pvt->read_frame.datalen = (uint32_t)(samples * 2);
+		tech_pvt->read_frame.samples = (uint32_t)samples;
+	} else {
+		tech_pvt->read_frame.datalen = 320;   /* 160 samples * 2 bytes (L16) */
+		tech_pvt->read_frame.samples = 160;
+	}
+
 	*frame = &tech_pvt->read_frame;
 	return SWITCH_STATUS_SUCCESS;
 }
@@ -325,19 +384,50 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 	channel = switch_core_session_get_channel(nsession);
 	dest    = outbound_profile->destination_number;
 
-	tech_pvt->destination = switch_core_session_strdup(nsession, dest);
-	switch_channel_set_variable(channel, "null_destination", tech_pvt->destination);
-
-	if (strcasecmp(dest, "none") != 0 && strstr(dest, "://") != NULL) {
-		switch_channel_set_variable(channel, SWITCH_HOLD_MUSIC_VARIABLE, dest);
-	}
-
 	switch_snprintf(name, sizeof(name), "null/%s", dest);
 	switch_channel_set_name(channel, name);
 
 	if (null_tech_init(tech_pvt, nsession) != SWITCH_STATUS_SUCCESS) {
 		switch_core_session_destroy(&nsession);
 		return SWITCH_CAUSE_DESTINATION_OUT_OF_ORDER;
+	}
+
+	/* Optional null_playback -- open a file/stream that the read path will
+	   consume on every tick (looping on EOF). */
+	{
+		const char *playback_path = var_event
+			? switch_event_get_header(var_event, "null_playback") : NULL;
+
+		if (!zstr(playback_path)) {
+			memset(&tech_pvt->fh, 0, sizeof(tech_pvt->fh));
+			if (switch_core_file_open(&tech_pvt->fh, playback_path, 1, 8000,
+									  SWITCH_FILE_FLAG_READ | SWITCH_FILE_DATA_SHORT,
+									  switch_core_session_get_pool(nsession))
+				== SWITCH_STATUS_SUCCESS) {
+				tech_pvt->playback_open = 1;
+				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(nsession), SWITCH_LOG_INFO,
+								  "mod_null: null_playback opened: %s\n", playback_path);
+			} else {
+				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(nsession), SWITCH_LOG_WARNING,
+								  "mod_null: null_playback open failed for [%s], falling back to silence\n",
+								  playback_path);
+			}
+		}
+	}
+
+	/* Optional null_timeout (seconds) -- stash a wall-clock deadline that
+	   read_frame checks every tick. */
+	{
+		const char *timeout_str = var_event
+			? switch_event_get_header(var_event, "null_timeout") : NULL;
+
+		if (!zstr(timeout_str)) {
+			int seconds = atoi(timeout_str);
+			if (seconds > 0) {
+				tech_pvt->deadline_us = switch_micro_time_now()
+					+ ((switch_time_t)seconds * 1000000);
+			}
+		}
 	}
 
 	caller_profile = switch_caller_profile_clone(nsession, outbound_profile);
