@@ -344,13 +344,18 @@ static switch_status_t synth_tech_init(private_t *tech_pvt, switch_core_session_
 						  "mod_synth: failed to open beep tone_stream, falling back to silence\n");
 	}
 
-	/* Pre-fill the silence read frame so channel_read_frame is allocation-free. */
-	tech_pvt->read_frame.data    = tech_pvt->databuf;
-	tech_pvt->read_frame.buflen  = sizeof(tech_pvt->databuf);
-	tech_pvt->read_frame.codec   = &tech_pvt->read_codec;
-	tech_pvt->read_frame.datalen = 320;
-	tech_pvt->read_frame.samples = 160;
-	tech_pvt->read_frame.flags   = SFF_NONE;
+	/* Pre-fill the read frame so channel_read_frame is allocation-free.
+	   rate/channels are needed by the bridge's resampler -- without them the
+	   bridge gets rate=0/channels=0 and produces no audible audio on the
+	   peer leg even though the read path is delivering valid PCM. */
+	tech_pvt->read_frame.data     = tech_pvt->databuf;
+	tech_pvt->read_frame.buflen   = sizeof(tech_pvt->databuf);
+	tech_pvt->read_frame.codec    = &tech_pvt->read_codec;
+	tech_pvt->read_frame.datalen  = 320;
+	tech_pvt->read_frame.samples  = 160;
+	tech_pvt->read_frame.rate     = 8000;
+	tech_pvt->read_frame.channels = 1;
+	tech_pvt->read_frame.flags    = SFF_NONE;
 	memset(tech_pvt->databuf, 0, sizeof(tech_pvt->databuf));
 
 	switch_mutex_init(&tech_pvt->mutex, SWITCH_MUTEX_NESTED, pool);
