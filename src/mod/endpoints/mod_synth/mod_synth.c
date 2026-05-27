@@ -23,10 +23,6 @@
  *   originate [synth_playback=local_stream://moh]synth/test &callcenter(my_queue)
  *   originate [synth_timeout=30,synth_playback=/tmp/hello.wav]synth/test &bridge(user/1000)
  *   originate synth/test 1000 XML default
- *
- * Patterned after the null sub-endpoint inside mod_loopback.c. Named
- * "synth" (not "null") so it doesn't collide with mod_loopback's own
- * undocumented "null" sub-endpoint.
  */
 
 #include <switch.h>
