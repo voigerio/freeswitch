@@ -3,7 +3,8 @@
  *
  * Originating synth/<name> creates a synthetic channel that:
  *   - is instantly answerable,
- *   - feeds 20ms L16/8000 silence frames on read (timer-paced),
+ *   - feeds 20ms L16/8000 audio frames on read (timer-paced), looping a
+ *     short "beep every second" tone as the audio source,
  *   - accepts and discards all write frames,
  *   - works with any dialplan application that needs a real channel.
  *
@@ -11,19 +12,18 @@
  * sets no channel variables of its own from it.
  *
  * Optional channel variables (settable via [key=value] originate prefix):
- *   synth_playback=<path>    play this file/stream from the synth side
- *                            instead of silence; loops on EOF. Accepts any
- *                            path the FS file API can open (file paths,
- *                            local_stream://, silence_stream://,
- *                            tone_stream://, etc.).
- *   synth_timeout=<seconds>  hang up the channel after N seconds regardless
- *                            of bridge state.
+ *   synth_timeout=<int seconds>   hang up the channel after N seconds,
+ *                                 regardless of bridge state.
  *
  *   originate synth/test &park()
- *   originate [synth_playback=local_stream://moh]synth/test &callcenter(my_queue)
- *   originate [synth_timeout=30,synth_playback=/tmp/hello.wav]synth/test &bridge(user/1000)
+ *   originate synth/test &callcenter(my_queue)
+ *   originate [synth_timeout=30]synth/test &bridge(user/1000)
  *   originate synth/test 1000 XML default
  */
+
+/* Hardcoded source for the read path: 200 ms tone @ 800 Hz, 800 ms silence,
+   looping -- "beep every second". */
+#define SYNTH_BEEP_URI "tone_stream://%(200,800,800)"
 
 #include <switch.h>
 
@@ -50,8 +50,10 @@ struct private_object {
 	switch_mutex_t          *mutex;
 	uint32_t                 flags;
 
-	/* Optional playback source -- when open, channel_read_frame returns audio
-	   from this file instead of zeroed silence, looping on EOF. */
+	/* Beep tone source. Opened once in synth_tech_init; channel_read_frame
+	   pulls samples from it on every tick and seeks back to 0 on EOF so the
+	   beep pattern keeps looping. If the open ever fails we fall through to
+	   zeroed silence in the read path. */
 	switch_file_handle_t     fh;
 	int                      playback_open;
 
@@ -330,6 +332,18 @@ static switch_status_t synth_tech_init(private_t *tech_pvt, switch_core_session_
 		return SWITCH_STATUS_FALSE;
 	}
 
+	/* Open the beep tone_stream. Failure is non-fatal -- the read path falls
+	   through to zeroed silence in that case. */
+	memset(&tech_pvt->fh, 0, sizeof(tech_pvt->fh));
+	if (switch_core_file_open(&tech_pvt->fh, SYNTH_BEEP_URI, 1, 8000,
+							  SWITCH_FILE_FLAG_READ | SWITCH_FILE_DATA_SHORT,
+							  pool) == SWITCH_STATUS_SUCCESS) {
+		tech_pvt->playback_open = 1;
+	} else {
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING,
+						  "mod_synth: failed to open beep tone_stream, falling back to silence\n");
+	}
+
 	/* Pre-fill the silence read frame so channel_read_frame is allocation-free. */
 	tech_pvt->read_frame.data    = tech_pvt->databuf;
 	tech_pvt->read_frame.buflen  = sizeof(tech_pvt->databuf);
@@ -402,85 +416,17 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 		return SWITCH_CAUSE_DESTINATION_OUT_OF_ORDER;
 	}
 
-	/* Optional synth_playback / synth_timeout.
-	 *
-	 * Values can contain ${chan_var}, $${global_var}, or ${api(args)}
-	 * references; we expand them here (same pattern mod_callcenter uses for
-	 * queue MOH and mod_dptools for various templates) so callers can write
-	 * e.g. {synth_playback=$${hold_music}} in the originate string.
-	 *
-	 * NOTE on the harmless "[CRIT] ... contains a variable" log line:
-	 * switch_ivr_originate.c:3001 duplicates the originate's var_event into
-	 * a local copy, passes that copy to us here, then destroys it at line
-	 * 3056. After we return, the originate iterates the *original* var_event
-	 * at line 3123 and pushes every header onto the new channel via
-	 * switch_channel_set_variable_var_check(check=TRUE). Any value that
-	 * still contains a "${...}" reference (the literal $${hold_music} the
-	 * originate parser stored verbatim) trips var_check, which logs CRIT
-	 * and refuses to overwrite. Net result: the expanded value mod_synth
-	 * sets here remains on the channel (verify with `uuid_getvar <uuid>
-	 * synth_playback`). The CRIT is purely cosmetic noise; the only way to
-	 * silence it would be to mutate the *original* var_event, which is
-	 * stack-local to switch_ivr_originate and not reachable from here.
-	 */
-	{
-		const char *playback_path = var_event
-			? switch_event_get_header(var_event, "synth_playback") : NULL;
-
-		if (!zstr(playback_path)) {
-			char *expanded = switch_channel_expand_variables(channel, (char *)playback_path);
-
-			if (!zstr(expanded)) {
-				memset(&tech_pvt->fh, 0, sizeof(tech_pvt->fh));
-				if (switch_core_file_open(&tech_pvt->fh, expanded, 1, 8000,
-										  SWITCH_FILE_FLAG_READ | SWITCH_FILE_DATA_SHORT,
-										  switch_core_session_get_pool(nsession))
-					== SWITCH_STATUS_SUCCESS) {
-					tech_pvt->playback_open = 1;
-					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(nsession), SWITCH_LOG_INFO,
-									  "mod_synth: synth_playback opened: %s\n", expanded);
-				} else {
-					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(nsession), SWITCH_LOG_WARNING,
-									  "mod_synth: synth_playback open failed for [%s], falling back to silence\n",
-									  expanded);
-				}
-
-				/* Stash the resolved value on the channel so CDR/ESL see the
-				   real path. The originate's post-pass will try to overwrite
-				   with the raw literal but var_check rejects it -- so this
-				   value is what ultimately stays. */
-				if (expanded != playback_path) {
-					switch_channel_set_variable(channel, "synth_playback", expanded);
-				}
-			}
-
-			if (expanded != playback_path) {
-				switch_safe_free(expanded);
-			}
-		}
-	}
-
+	/* Optional synth_timeout=<seconds>. Plain integer -- no variable
+	   substitution -- so we don't trip the originate's var_check post-pass. */
 	{
 		const char *timeout_str = var_event
 			? switch_event_get_header(var_event, "synth_timeout") : NULL;
 
 		if (!zstr(timeout_str)) {
-			char *expanded = switch_channel_expand_variables(channel, (char *)timeout_str);
-
-			if (!zstr(expanded)) {
-				int seconds = atoi(expanded);
-				if (seconds > 0) {
-					tech_pvt->deadline_us = switch_micro_time_now()
-						+ ((switch_time_t)seconds * 1000000);
-				}
-
-				if (expanded != timeout_str) {
-					switch_channel_set_variable(channel, "synth_timeout", expanded);
-				}
-			}
-
-			if (expanded != timeout_str) {
-				switch_safe_free(expanded);
+			int seconds = atoi(timeout_str);
+			if (seconds > 0) {
+				tech_pvt->deadline_us = switch_micro_time_now()
+					+ ((switch_time_t)seconds * 1000000);
 			}
 		}
 	}

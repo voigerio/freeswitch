@@ -2,23 +2,22 @@
 
 `mod_synth` provides a synthetic FreeSWITCH endpoint that creates a real,
 auto-answered channel with no SIP, no network, and no hardware behind it.
-The channel hands back silence on read and discards everything written to
-it. Use it as the left side of an `originate` whenever you would otherwise
-have reached for `loopback/`.
+The channel feeds a looping "beep every second" tone on the read side and
+discards everything written to it. Use it as the left side of an
+`originate` whenever you would otherwise have reached for `loopback/`.
 
 ```
 originate synth/<name> &<application>(...)
 ```
 
 The string after `synth/` is used only as the channel name. It has no
-behavioural side effects — for audio or duration control, see the
-`synth_playback` / `synth_timeout` variables below.
+behavioural side effects.
 
 ## Why this exists
 
 `mod_callcenter` is a dialplan application, not an endpoint, so you cannot
-`originate` to it — you can only run it on an existing channel. Today the
-only synthetic option is `loopback/`, which:
+`originate` to it — you can only run it on an existing channel. The only
+synthetic alternative is `loopback/`, which:
 
 - Creates four legs instead of two.
 - Has variable-isolation quirks between the A/B legs.
@@ -68,45 +67,12 @@ To autoload at startup, add to `conf/autoload_configs/modules.conf.xml`:
 
 ## Channel variables read by `mod_synth`
 
-Set these via the `[key=value,...]` originate prefix (or `{key=value,...}`,
-or `uuid_setvar` before the channel hits CS_INIT). Anything that
-populates the outgoing channel's variables works.
+Set via the `[key=value,...]` originate prefix (or `{key=value,...}`, or
+`uuid_setvar` before the channel hits CS_INIT).
 
 | Variable        | Effect                                                              |
 |-----------------|---------------------------------------------------------------------|
-| `synth_playback` | Path or URI to play continuously from the synth side instead of silence. Loops on EOF. Accepts files (`/tmp/foo.wav`), `local_stream://moh`, `silence_stream://1400`, `tone_stream://...`, or anything else the FS file API can open. |
-| `synth_timeout`  | Integer seconds. Once the channel has been alive that long, mod_synth hangs it up with cause `ALLOTTED_TIMEOUT`, even if it's bridged. |
-
-Both values support `${chan_var}`, `$${global_var}`, and `${api(args)}`
-substitution — mod_synth runs them through `switch_channel_expand_variables`
-before using them. So this works straight from `fs_cli`:
-
-```
-bgapi originate {synth_playback=$${hold_music}}synth/test 'callcenter:support@ws-self' inline
-```
-
-### Cosmetic CRIT in the log
-
-When you pass a value containing `${...}` or `$${...}` via the `{}`
-originate prefix, you may see:
-
-```
-[CRIT] switch_channel.c:1508 Invalid data (${synth_playback} contains a variable)
-```
-
-This is harmless. After `mod_synth` consumes and expands the value and
-stores the resolved string on the channel, the originate post-pass at
-[switch_ivr_originate.c:3123](../../../switch_ivr_originate.c#L3123)
-iterates the (still-raw) original `var_event` and tries to re-set
-`synth_playback` on the channel. The core's `var_check` rejects values
-containing `${...}` (logs the CRIT) and **does not overwrite** — so the
-expanded value `mod_synth` set remains the final channel-variable value.
-Verify with `uuid_getvar <uuid> synth_playback` while the call is alive.
-
-The CRIT cannot be cleanly silenced from inside an endpoint module: the
-original `var_event` lives on the stack inside `switch_ivr_originate()`
-and is not reachable from `channel_outgoing_channel` (which only ever
-sees a duplicate of it).
+| `synth_timeout` | Integer seconds. Once the channel has been alive that long, `mod_synth` hangs it up with cause `ALLOTTED_TIMEOUT`, even if it's bridged. Plain integer only — no variable substitution. |
 
 `mod_synth` does **not** set any channel variables of its own. If you want
 `hold_music` for bridge/hold flows, or `cc_moh_override` for mod_callcenter,
@@ -150,23 +116,17 @@ or rely on the queue's `moh` config:
 originate {cc_moh_override=local_stream://moh}synth/test &callcenter(my_queue)
 ```
 
+### Capping call duration
+
+```
+originate [synth_timeout=30]synth/test &bridge(user/1000)
+originate [synth_timeout=120]synth/test &callcenter(my_queue)
+```
+
 ### Dialplan instead of an inline app
 
 ```
 originate synth/test 1000 XML default
-```
-
-### Playing audio from the synth side / capping call duration
-
-```
-# Loop a WAV continuously from the synth side while the bridge is up.
-originate [synth_playback=/usr/share/sounds/freeswitch/intro.wav]synth/test &park()
-
-# Hang up after 30 seconds even if bridged.
-originate [synth_timeout=30]synth/test &bridge(user/1000)
-
-# Combine: play hold music for at most 2 minutes, then drop.
-originate [synth_playback=local_stream://moh,synth_timeout=120]synth/test &callcenter(my_queue)
 ```
 
 ### With channel variables
@@ -189,8 +149,10 @@ uuid_setvar <uuid> my_var hello
 ## What the channel actually does
 
 - Acknowledges `INDICATE_ANSWER` by marking the channel answered.
-- Reads return 20 ms frames at L16/8000/mono — silence by default, or
-  audio from `synth_playback` if set, paced by a `soft` timer so the CPU
+- Reads return 20 ms frames at L16/8000/mono pulled from a hardcoded
+  `tone_stream://%(200,800,800)` (200 ms 800 Hz beep, 800 ms silence,
+  looped — "beep every second"). If the tone open ever fails the read
+  path falls through to silence. Paced by a `soft` timer so the CPU
   stays idle.
 - Writes are accepted and dropped.
 - `BRIDGE` / `UNBRIDGE` / `AUDIO_SYNC` messages resync the timer so the
@@ -204,5 +166,5 @@ uuid_setvar <uuid> my_var hello
 - No video support.
 - No DTMF generation (DTMF send is a no-op).
 - No media negotiation; the codec is fixed to L16/8000/20 ms mono.
-- Without `synth_playback`, the read side is pure silence — there is
-  nothing meaningful to record from a bare `synth/` leg.
+- The audio source is a fixed beep tone — useful as an "alive"
+  indicator but not a substitute for music or speech.
