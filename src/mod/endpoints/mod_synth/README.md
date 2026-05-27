@@ -77,6 +77,14 @@ populates the outgoing channel's variables works.
 | `synth_playback` | Path or URI to play continuously from the synth side instead of silence. Loops on EOF. Accepts files (`/tmp/foo.wav`), `local_stream://moh`, `silence_stream://1400`, `tone_stream://...`, or anything else the FS file API can open. |
 | `synth_timeout`  | Integer seconds. Once the channel has been alive that long, mod_synth hangs it up with cause `ALLOTTED_TIMEOUT`, even if it's bridged. |
 
+Both values support `${chan_var}`, `$${global_var}`, and `${api(args)}`
+substitution — mod_synth runs them through `switch_channel_expand_variables`
+before using them. So this works straight from `fs_cli`:
+
+```
+bgapi originate {synth_playback=$${hold_music}}synth/test 'callcenter:support@ws-self' inline
+```
+
 `mod_synth` does **not** set any channel variables of its own. If you want
 `hold_music` for bridge/hold flows, or `cc_moh_override` for mod_callcenter,
 set them explicitly on the originate, e.g.

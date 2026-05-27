@@ -403,39 +403,70 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 	}
 
 	/* Optional synth_playback -- open a file/stream that the read path will
-	   consume on every tick (looping on EOF). */
+	   consume on every tick (looping on EOF). Values can contain ${chan_var},
+	   $${global_var}, or ${api(args)} references; expand them here so callers
+	   can write e.g. {synth_playback=$${hold_music}} in the originate.       */
 	{
 		const char *playback_path = var_event
 			? switch_event_get_header(var_event, "synth_playback") : NULL;
 
 		if (!zstr(playback_path)) {
-			memset(&tech_pvt->fh, 0, sizeof(tech_pvt->fh));
-			if (switch_core_file_open(&tech_pvt->fh, playback_path, 1, 8000,
-									  SWITCH_FILE_FLAG_READ | SWITCH_FILE_DATA_SHORT,
-									  switch_core_session_get_pool(nsession))
-				== SWITCH_STATUS_SUCCESS) {
-				tech_pvt->playback_open = 1;
-				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(nsession), SWITCH_LOG_INFO,
-								  "mod_synth: synth_playback opened: %s\n", playback_path);
-			} else {
-				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(nsession), SWITCH_LOG_WARNING,
-								  "mod_synth: synth_playback open failed for [%s], falling back to silence\n",
-								  playback_path);
+			char *expanded = switch_channel_expand_variables(channel, (char *)playback_path);
+
+			if (!zstr(expanded)) {
+				memset(&tech_pvt->fh, 0, sizeof(tech_pvt->fh));
+				if (switch_core_file_open(&tech_pvt->fh, expanded, 1, 8000,
+										  SWITCH_FILE_FLAG_READ | SWITCH_FILE_DATA_SHORT,
+										  switch_core_session_get_pool(nsession))
+					== SWITCH_STATUS_SUCCESS) {
+					tech_pvt->playback_open = 1;
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(nsession), SWITCH_LOG_INFO,
+									  "mod_synth: synth_playback opened: %s\n", expanded);
+				} else {
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(nsession), SWITCH_LOG_WARNING,
+									  "mod_synth: synth_playback open failed for [%s], falling back to silence\n",
+									  expanded);
+				}
+
+				/* Replace the raw value on the channel with the expanded one so
+				   downstream consumers (CDR, ESL) and the unused-variable check
+				   in switch_channel_set_variable don't choke on the literal
+				   ${...} that arrived from the originate parser. */
+				if (expanded != playback_path) {
+					switch_channel_set_variable(channel, "synth_playback", expanded);
+				}
+			}
+
+			if (expanded != playback_path) {
+				switch_safe_free(expanded);
 			}
 		}
 	}
 
 	/* Optional synth_timeout (seconds) -- stash a wall-clock deadline that
-	   read_frame checks every tick. */
+	   read_frame checks every tick. Variables in the value are expanded same
+	   as synth_playback. */
 	{
 		const char *timeout_str = var_event
 			? switch_event_get_header(var_event, "synth_timeout") : NULL;
 
 		if (!zstr(timeout_str)) {
-			int seconds = atoi(timeout_str);
-			if (seconds > 0) {
-				tech_pvt->deadline_us = switch_micro_time_now()
-					+ ((switch_time_t)seconds * 1000000);
+			char *expanded = switch_channel_expand_variables(channel, (char *)timeout_str);
+
+			if (!zstr(expanded)) {
+				int seconds = atoi(expanded);
+				if (seconds > 0) {
+					tech_pvt->deadline_us = switch_micro_time_now()
+						+ ((switch_time_t)seconds * 1000000);
+				}
+
+				if (expanded != timeout_str) {
+					switch_channel_set_variable(channel, "synth_timeout", expanded);
+				}
+			}
+
+			if (expanded != timeout_str) {
+				switch_safe_free(expanded);
 			}
 		}
 	}
