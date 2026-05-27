@@ -1,5 +1,5 @@
-MODNAME = mod_null.so
-MODOBJ  = mod_null.o
+MODNAME = mod_synth.so
+MODOBJ  = mod_synth.o
 
 CC      = gcc
 CFLAGS  = -fPIC -g -ggdb -Wall -Werror `pkg-config --cflags freeswitch`
