@@ -7,8 +7,12 @@ it. Use it as the left side of an `originate` whenever you would otherwise
 have reached for `loopback/`.
 
 ```
-originate null/<destination> &<application>(...)
+originate null/<name> &<application>(...)
 ```
+
+The string after `null/` is used only as the channel name. It has no
+behavioural side effects — for audio or duration control, see the
+`null_playback` / `null_timeout` variables below.
 
 ## Why this exists
 
@@ -62,17 +66,21 @@ To autoload at startup, add to `conf/autoload_configs/modules.conf.xml`:
 <load module="mod_null"/>
 ```
 
-## Channel variables set by `mod_null`
+## Channel variables read by `mod_null`
 
-| Variable           | Value                                                                 |
-|--------------------|-----------------------------------------------------------------------|
-| `null_destination` | The string after `null/` (e.g. `local_stream://moh`, `test`).         |
-| `hold_music`       | Same as `null_destination`, but only when it contains `://` and is not empty / not `none`. Lets bridge/park/hold flows pick MOH up automatically. |
+Set these via the `[key=value,...]` originate prefix (or `{key=value,...}`,
+or `uuid_setvar` before the channel hits CS_INIT). Anything that
+populates the outgoing channel's variables works.
 
-`mod_callcenter` uses its own `cc_moh_override` channel variable (or the
-queue's `moh` config). To make a queue play the same MOH that the null leg
-advertises, set it explicitly in the originate, e.g.
-`{cc_moh_override=local_stream://moh}`.
+| Variable        | Effect                                                              |
+|-----------------|---------------------------------------------------------------------|
+| `null_playback` | Path or URI to play continuously from the null side instead of silence. Loops on EOF. Accepts files (`/tmp/foo.wav`), `local_stream://moh`, `silence_stream://1400`, `tone_stream://...`, or anything else the FS file API can open. |
+| `null_timeout`  | Integer seconds. Once the channel has been alive that long, mod_null hangs it up with cause `ALLOTTED_TIMEOUT`, even if it's bridged. |
+
+`mod_null` does **not** set any channel variables of its own. If you want
+`hold_music` for bridge/hold flows, or `cc_moh_override` for mod_callcenter,
+set them explicitly on the originate, e.g.
+`{hold_music=local_stream://moh,cc_moh_override=local_stream://moh}`.
 
 ## Usage
 
@@ -101,11 +109,15 @@ originate null/test &lua(myscript.lua)
 ### Callcenter
 
 ```
-originate null/local_stream://moh        &callcenter(my_queue)
-originate null/silence_stream://1400     &callcenter(my_queue)
+originate null/test &callcenter(my_queue)
 ```
 
-The first form auto-sets `hold_music=local_stream://moh` on the null leg.
+If you want MOH played toward the queue member, set `cc_moh_override`
+or rely on the queue's `moh` config:
+
+```
+originate {cc_moh_override=local_stream://moh}null/test &callcenter(my_queue)
+```
 
 ### Dialplan instead of an inline app
 
@@ -113,10 +125,23 @@ The first form auto-sets `hold_music=local_stream://moh` on the null leg.
 originate null/test 1000 XML default
 ```
 
+### Playing audio from the null side / capping call duration
+
+```
+# Loop a WAV continuously from the null side while the bridge is up.
+originate [null_playback=/usr/share/sounds/freeswitch/intro.wav]null/test &park()
+
+# Hang up after 30 seconds even if bridged.
+originate [null_timeout=30]null/test &bridge(user/1000)
+
+# Combine: play hold music for at most 2 minutes, then drop.
+originate [null_playback=local_stream://moh,null_timeout=120]null/test &callcenter(my_queue)
+```
+
 ### With channel variables
 
 ```
-originate {origination_uuid=custom-uuid,origination_caller_id_number=5551234}null/local_stream://moh &callcenter(support@default)
+originate {origination_uuid=custom-uuid,origination_caller_id_number=5551234}null/test &callcenter(support@default)
 ```
 
 ### Lifecycle controls
@@ -132,21 +157,21 @@ uuid_setvar <uuid> my_var hello
 
 ## What the channel actually does
 
-- Auto-acknowledges `INDICATE_ANSWER` and `INDICATE_PROGRESS` by marking
-  the channel answered.
-- Reads return 20 ms frames of L16 silence (8 kHz, mono, 320 bytes),
-  paced by a `soft` timer so the CPU stays idle.
+- Acknowledges `INDICATE_ANSWER` by marking the channel answered.
+- Reads return 20 ms frames at L16/8000/mono — silence by default, or
+  audio from `null_playback` if set, paced by a `soft` timer so the CPU
+  stays idle.
 - Writes are accepted and dropped.
-- `BRIDGE` / `UNBRIDGE` messages are no-ops.
+- `BRIDGE` / `UNBRIDGE` / `AUDIO_SYNC` messages resync the timer so the
+  first read after a bridge transition doesn't come back early.
 - `SWITCH_SIG_BREAK` produces a single CNG frame so `uuid_break`
   interrupts blocking apps.
-- `SWITCH_SIG_KILL` and `INDICATE_KILL` tear the timer down so any
-  parked reader exits immediately.
+- `SWITCH_SIG_KILL` hangs the channel up with `NORMAL_CLEARING`.
 
 ## Known limitations
 
 - No video support.
 - No DTMF generation (DTMF send is a no-op).
 - No media negotiation; the codec is fixed to L16/8000/20 ms mono.
-- The audio source is synthetic silence — there is nothing meaningful to
-  record from the `null/` side.
+- Without `null_playback`, the read side is pure silence — there is
+  nothing meaningful to record from a bare `null/` leg.
