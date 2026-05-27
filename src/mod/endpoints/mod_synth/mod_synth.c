@@ -402,10 +402,27 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 		return SWITCH_CAUSE_DESTINATION_OUT_OF_ORDER;
 	}
 
-	/* Optional synth_playback -- open a file/stream that the read path will
-	   consume on every tick (looping on EOF). Values can contain ${chan_var},
-	   $${global_var}, or ${api(args)} references; expand them here so callers
-	   can write e.g. {synth_playback=$${hold_music}} in the originate.       */
+	/* Optional synth_playback / synth_timeout.
+	 *
+	 * Values can contain ${chan_var}, $${global_var}, or ${api(args)}
+	 * references; we expand them here (same pattern mod_callcenter uses for
+	 * queue MOH and mod_dptools for various templates) so callers can write
+	 * e.g. {synth_playback=$${hold_music}} in the originate string.
+	 *
+	 * NOTE on the harmless "[CRIT] ... contains a variable" log line:
+	 * switch_ivr_originate.c:3001 duplicates the originate's var_event into
+	 * a local copy, passes that copy to us here, then destroys it at line
+	 * 3056. After we return, the originate iterates the *original* var_event
+	 * at line 3123 and pushes every header onto the new channel via
+	 * switch_channel_set_variable_var_check(check=TRUE). Any value that
+	 * still contains a "${...}" reference (the literal $${hold_music} the
+	 * originate parser stored verbatim) trips var_check, which logs CRIT
+	 * and refuses to overwrite. Net result: the expanded value mod_synth
+	 * sets here remains on the channel (verify with `uuid_getvar <uuid>
+	 * synth_playback`). The CRIT is purely cosmetic noise; the only way to
+	 * silence it would be to mutate the *original* var_event, which is
+	 * stack-local to switch_ivr_originate and not reachable from here.
+	 */
 	{
 		const char *playback_path = var_event
 			? switch_event_get_header(var_event, "synth_playback") : NULL;
@@ -428,8 +445,10 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 									  expanded);
 				}
 
-				/* Replace the raw value on the channel with the expanded one so
-				   downstream consumers (CDR, ESL) see the resolved path.      */
+				/* Stash the resolved value on the channel so CDR/ESL see the
+				   real path. The originate's post-pass will try to overwrite
+				   with the raw literal but var_check rejects it -- so this
+				   value is what ultimately stays. */
 				if (expanded != playback_path) {
 					switch_channel_set_variable(channel, "synth_playback", expanded);
 				}
@@ -438,18 +457,9 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 			if (expanded != playback_path) {
 				switch_safe_free(expanded);
 			}
-
-			/* Strip the raw header from var_event so the originate post-pass
-			   doesn't try to re-set the still-unexpanded literal as a channel
-			   variable and trip switch_channel.c's var_check (which logs a
-			   noisy CRIT for any value containing ${...}). */
-			switch_event_del_header(var_event, "synth_playback");
 		}
 	}
 
-	/* Optional synth_timeout (seconds) -- stash a wall-clock deadline that
-	   read_frame checks every tick. Variables in the value are expanded same
-	   as synth_playback. */
 	{
 		const char *timeout_str = var_event
 			? switch_event_get_header(var_event, "synth_timeout") : NULL;
@@ -472,8 +482,6 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 			if (expanded != timeout_str) {
 				switch_safe_free(expanded);
 			}
-
-			switch_event_del_header(var_event, "synth_timeout");
 		}
 	}
 
