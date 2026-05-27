@@ -62,10 +62,6 @@ struct private_object {
 	   SYNTH_SAMPLES_20MS on every tick. */
 	uint32_t                 beep_pos;
 
-	/* One-shot diagnostic: log when read_frame first delivers a frame so we
-	   can confirm the bridge is actually pulling audio from us. */
-	int                      logged_first_read;
-
 	/* Optional hard deadline in microseconds (0 = disabled). When the wall
 	   clock crosses this point, channel_read_frame hangs up the channel. */
 	switch_time_t            deadline_us;
@@ -233,15 +229,6 @@ static switch_status_t channel_read_frame(switch_core_session_t *session, switch
 	tech_pvt->read_frame.samples  = SYNTH_SAMPLES_20MS;
 	tech_pvt->read_frame.rate     = SYNTH_SAMPLE_RATE;
 	tech_pvt->read_frame.channels = 1;
-
-	if (!tech_pvt->logged_first_read) {
-		tech_pvt->logged_first_read = 1;
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO,
-						  "mod_synth: first read_frame delivered "
-						  "(samples=%u datalen=%u rate=%u channels=%u)\n",
-						  tech_pvt->read_frame.samples, tech_pvt->read_frame.datalen,
-						  tech_pvt->read_frame.rate, tech_pvt->read_frame.channels);
-	}
 
 	*frame = &tech_pvt->read_frame;
 	return SWITCH_STATUS_SUCCESS;
