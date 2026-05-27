@@ -80,6 +80,17 @@ static switch_status_t channel_on_init(switch_core_session_t *session)
 	return SWITCH_STATUS_SUCCESS;
 }
 
+static switch_status_t channel_on_consume_media(switch_core_session_t *session)
+{
+	/* CS_CONSUME_MEDIA is the state outbound channels park in after CS_ROUTING
+	   when there is no queued extension -- i.e. the post-answer-app originate
+	   forms like `originate null/x 'app:args' inline` (vs. `&app()` which
+	   queues an extension and goes straight to CS_EXECUTE). The originate
+	   blocks here waiting for the channel to be answered, so do it now. */
+	switch_channel_mark_answered(switch_core_session_get_channel(session));
+	return SWITCH_STATUS_SUCCESS;
+}
+
 static switch_status_t channel_on_destroy(switch_core_session_t *session)
 {
 	private_t *tech_pvt = switch_core_session_get_private(session);
@@ -451,7 +462,7 @@ static switch_state_handler_table_t null_state_handlers = {
 	/*.on_hangup         */ NULL,
 	/*.on_exchange_media */ NULL,
 	/*.on_soft_execute   */ NULL,
-	/*.on_consume_media  */ NULL,
+	/*.on_consume_media  */ channel_on_consume_media,
 	/*.on_hibernate      */ NULL,
 	/*.on_reset          */ NULL,
 	/*.on_park           */ NULL,
