@@ -85,6 +85,29 @@ before using them. So this works straight from `fs_cli`:
 bgapi originate {synth_playback=$${hold_music}}synth/test 'callcenter:support@ws-self' inline
 ```
 
+### Cosmetic CRIT in the log
+
+When you pass a value containing `${...}` or `$${...}` via the `{}`
+originate prefix, you may see:
+
+```
+[CRIT] switch_channel.c:1508 Invalid data (${synth_playback} contains a variable)
+```
+
+This is harmless. After `mod_synth` consumes and expands the value and
+stores the resolved string on the channel, the originate post-pass at
+[switch_ivr_originate.c:3123](../../../switch_ivr_originate.c#L3123)
+iterates the (still-raw) original `var_event` and tries to re-set
+`synth_playback` on the channel. The core's `var_check` rejects values
+containing `${...}` (logs the CRIT) and **does not overwrite** — so the
+expanded value `mod_synth` set remains the final channel-variable value.
+Verify with `uuid_getvar <uuid> synth_playback` while the call is alive.
+
+The CRIT cannot be cleanly silenced from inside an endpoint module: the
+original `var_event` lives on the stack inside `switch_ivr_originate()`
+and is not reachable from `channel_outgoing_channel` (which only ever
+sees a duplicate of it).
+
 `mod_synth` does **not** set any channel variables of its own. If you want
 `hold_music` for bridge/hold flows, or `cc_moh_override` for mod_callcenter,
 set them explicitly on the originate, e.g.
