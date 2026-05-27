@@ -21,9 +21,16 @@
  *   originate synth/test 1000 XML default
  */
 
-/* Hardcoded source for the read path: 200 ms tone @ 800 Hz, 800 ms silence,
-   looping -- "beep every second". */
-#define SYNTH_BEEP_URI "tone_stream://%(200,800,800)"
+/* Read path generates the audio in C -- 800 Hz square wave for 200 ms,
+   then 800 ms silence, looping every second. Avoids depending on the FS
+   file API (which had EOF/seek edge cases for tone_stream://). */
+#define SYNTH_SAMPLE_RATE   8000   /* Hz */
+#define SYNTH_SAMPLES_20MS  160
+#define SYNTH_TONE_HZ       800
+#define SYNTH_TONE_AMP      16000
+#define SYNTH_CYCLE_SAMPLES (SYNTH_SAMPLE_RATE)             /* 1 second cycle */
+#define SYNTH_TONE_SAMPLES  (SYNTH_SAMPLE_RATE / 5)         /* 200 ms tone */
+#define SYNTH_HALFCYCLE     (SYNTH_SAMPLE_RATE / SYNTH_TONE_HZ / 2)  /* square */
 
 #include <switch.h>
 
@@ -50,12 +57,14 @@ struct private_object {
 	switch_mutex_t          *mutex;
 	uint32_t                 flags;
 
-	/* Beep tone source. Opened once in synth_tech_init; channel_read_frame
-	   pulls samples from it on every tick and seeks back to 0 on EOF so the
-	   beep pattern keeps looping. If the open ever fails we fall through to
-	   zeroed silence in the read path. */
-	switch_file_handle_t     fh;
-	int                      playback_open;
+	/* Beep generator state: current position within the 1-second cycle
+	   (0..SYNTH_CYCLE_SAMPLES-1). channel_read_frame advances this by
+	   SYNTH_SAMPLES_20MS on every tick. */
+	uint32_t                 beep_pos;
+
+	/* One-shot diagnostic: log when read_frame first delivers a frame so we
+	   can confirm the bridge is actually pulling audio from us. */
+	int                      logged_first_read;
 
 	/* Optional hard deadline in microseconds (0 = disabled). When the wall
 	   clock crosses this point, channel_read_frame hangs up the channel. */
@@ -100,10 +109,6 @@ static switch_status_t channel_on_destroy(switch_core_session_t *session)
 		return SWITCH_STATUS_SUCCESS;
 	}
 
-	if (tech_pvt->playback_open) {
-		switch_core_file_close(&tech_pvt->fh);
-		tech_pvt->playback_open = 0;
-	}
 	if (tech_pvt->timer.timer_interface) {
 		switch_core_timer_destroy(&tech_pvt->timer);
 	}
@@ -203,38 +208,39 @@ static switch_status_t channel_read_frame(switch_core_session_t *session, switch
 		return SWITCH_STATUS_FALSE;
 	}
 
-	tech_pvt->read_frame.flags   = SFF_NONE;
-	tech_pvt->read_frame.codec   = &tech_pvt->read_codec;
+	{
+		int16_t *out = (int16_t *)tech_pvt->databuf;
+		uint32_t pos = tech_pvt->beep_pos;
+		int      i;
 
-	if (tech_pvt->playback_open) {
-		switch_size_t samples = 160;
-
-		if (switch_core_file_read(&tech_pvt->fh, tech_pvt->databuf, &samples) != SWITCH_STATUS_SUCCESS
-			|| samples == 0) {
-			/* EOF or read error -- try to loop by seeking to start. */
-			unsigned int pos = 0;
-			samples = 160;
-			if (switch_core_file_seek(&tech_pvt->fh, &pos, 0, SWITCH_SEEK_SET) != SWITCH_STATUS_SUCCESS
-				|| switch_core_file_read(&tech_pvt->fh, tech_pvt->databuf, &samples) != SWITCH_STATUS_SUCCESS
-				|| samples == 0) {
-				/* Looping failed -- fall back to silence for this tick and
-				   subsequent ones. */
-				memset(tech_pvt->databuf, 0, 320);
-				samples = 160;
+		for (i = 0; i < SYNTH_SAMPLES_20MS; i++) {
+			if (pos < SYNTH_TONE_SAMPLES) {
+				out[i] = ((pos / SYNTH_HALFCYCLE) & 1) ? -SYNTH_TONE_AMP : SYNTH_TONE_AMP;
+			} else {
+				out[i] = 0;
+			}
+			pos++;
+			if (pos >= SYNTH_CYCLE_SAMPLES) {
+				pos = 0;
 			}
 		}
+		tech_pvt->beep_pos = pos;
+	}
 
-		/* Pad short reads with silence so every frame is exactly 20 ms. */
-		if (samples < 160) {
-			memset(tech_pvt->databuf + (samples * 2), 0, (160 - samples) * 2);
-			samples = 160;
-		}
+	tech_pvt->read_frame.flags    = SFF_NONE;
+	tech_pvt->read_frame.codec    = &tech_pvt->read_codec;
+	tech_pvt->read_frame.datalen  = SYNTH_SAMPLES_20MS * 2;
+	tech_pvt->read_frame.samples  = SYNTH_SAMPLES_20MS;
+	tech_pvt->read_frame.rate     = SYNTH_SAMPLE_RATE;
+	tech_pvt->read_frame.channels = 1;
 
-		tech_pvt->read_frame.datalen = (uint32_t)(samples * 2);
-		tech_pvt->read_frame.samples = (uint32_t)samples;
-	} else {
-		tech_pvt->read_frame.datalen = 320;   /* 160 samples * 2 bytes (L16) */
-		tech_pvt->read_frame.samples = 160;
+	if (!tech_pvt->logged_first_read) {
+		tech_pvt->logged_first_read = 1;
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO,
+						  "mod_synth: first read_frame delivered "
+						  "(samples=%u datalen=%u rate=%u channels=%u)\n",
+						  tech_pvt->read_frame.samples, tech_pvt->read_frame.datalen,
+						  tech_pvt->read_frame.rate, tech_pvt->read_frame.channels);
 	}
 
 	*frame = &tech_pvt->read_frame;
@@ -332,30 +338,17 @@ static switch_status_t synth_tech_init(private_t *tech_pvt, switch_core_session_
 		return SWITCH_STATUS_FALSE;
 	}
 
-	/* Open the beep tone_stream. Failure is non-fatal -- the read path falls
-	   through to zeroed silence in that case. */
-	memset(&tech_pvt->fh, 0, sizeof(tech_pvt->fh));
-	if (switch_core_file_open(&tech_pvt->fh, SYNTH_BEEP_URI, 1, 8000,
-							  SWITCH_FILE_FLAG_READ | SWITCH_FILE_DATA_SHORT,
-							  pool) == SWITCH_STATUS_SUCCESS) {
-		tech_pvt->playback_open = 1;
-	} else {
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING,
-						  "mod_synth: failed to open beep tone_stream, falling back to silence\n");
-	}
-
-	/* Pre-fill the read frame so channel_read_frame is allocation-free.
-	   rate/channels are needed by the bridge's resampler -- without them the
-	   bridge gets rate=0/channels=0 and produces no audible audio on the
-	   peer leg even though the read path is delivering valid PCM. */
+	/* Pre-fill the read frame so channel_read_frame is allocation-free. The
+	   actual PCM is generated in channel_read_frame on every tick. */
 	tech_pvt->read_frame.data     = tech_pvt->databuf;
 	tech_pvt->read_frame.buflen   = sizeof(tech_pvt->databuf);
 	tech_pvt->read_frame.codec    = &tech_pvt->read_codec;
-	tech_pvt->read_frame.datalen  = 320;
-	tech_pvt->read_frame.samples  = 160;
-	tech_pvt->read_frame.rate     = 8000;
+	tech_pvt->read_frame.datalen  = SYNTH_SAMPLES_20MS * 2;
+	tech_pvt->read_frame.samples  = SYNTH_SAMPLES_20MS;
+	tech_pvt->read_frame.rate     = SYNTH_SAMPLE_RATE;
 	tech_pvt->read_frame.channels = 1;
 	tech_pvt->read_frame.flags    = SFF_NONE;
+	tech_pvt->beep_pos            = 0;
 	memset(tech_pvt->databuf, 0, sizeof(tech_pvt->databuf));
 
 	switch_mutex_init(&tech_pvt->mutex, SWITCH_MUTEX_NESTED, pool);
