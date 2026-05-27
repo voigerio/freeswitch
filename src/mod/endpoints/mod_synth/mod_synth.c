@@ -429,9 +429,7 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 				}
 
 				/* Replace the raw value on the channel with the expanded one so
-				   downstream consumers (CDR, ESL) and the unused-variable check
-				   in switch_channel_set_variable don't choke on the literal
-				   ${...} that arrived from the originate parser. */
+				   downstream consumers (CDR, ESL) see the resolved path.      */
 				if (expanded != playback_path) {
 					switch_channel_set_variable(channel, "synth_playback", expanded);
 				}
@@ -440,6 +438,12 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 			if (expanded != playback_path) {
 				switch_safe_free(expanded);
 			}
+
+			/* Strip the raw header from var_event so the originate post-pass
+			   doesn't try to re-set the still-unexpanded literal as a channel
+			   variable and trip switch_channel.c's var_check (which logs a
+			   noisy CRIT for any value containing ${...}). */
+			switch_event_del_header(var_event, "synth_playback");
 		}
 	}
 
@@ -468,6 +472,8 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 			if (expanded != timeout_str) {
 				switch_safe_free(expanded);
 			}
+
+			switch_event_del_header(var_event, "synth_timeout");
 		}
 	}
 
