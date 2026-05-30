@@ -259,12 +259,29 @@ static switch_status_t channel_receive_message(switch_core_session_t *session, s
 		switch_channel_mark_answered(channel);
 		break;
 	case SWITCH_MESSAGE_INDICATE_BRIDGE:
-	case SWITCH_MESSAGE_INDICATE_UNBRIDGE:
 	case SWITCH_MESSAGE_INDICATE_AUDIO_SYNC:
 		/* Resync the timer so the first read after a bridge transition doesn't
 		   come back early because the timer thinks ticks were missed. */
 		if (tech_pvt->timer.timer_interface) {
 			switch_core_timer_sync(&tech_pvt->timer);
+		}
+		break;
+	case SWITCH_MESSAGE_INDICATE_UNBRIDGE:
+		if (tech_pvt->timer.timer_interface) {
+			switch_core_timer_sync(&tech_pvt->timer);
+		}
+		/* Honor the standard hangup_after_bridge convention. FS normally
+		   handles this in the `bridge` dialplan app's post-bridge wrapper,
+		   so endpoints don't have to — but synth often gets bridged via
+		   paths that don't go through that wrapper (e.g. mod_callcenter
+		   calls switch_ivr_uuid_bridge directly). Without this, a synth
+		   caller set up with hangup_after_bridge=true keeps living after
+		   the bridge ends and gets re-dispatched by callcenter, creating
+		   phantom calls. */
+		if (switch_true(switch_channel_get_variable(channel, "hangup_after_bridge"))) {
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO,
+							  "mod_synth: hangup_after_bridge set and bridge ended, hanging up\n");
+			switch_channel_hangup(channel, SWITCH_CAUSE_NORMAL_CLEARING);
 		}
 		break;
 	default:
