@@ -280,11 +280,8 @@ static switch_status_t channel_receive_message(switch_core_session_t *session, s
 		   phantom calls. */
 		if (switch_true(switch_channel_get_variable(channel, "hangup_after_bridge"))) {
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO,
-							  "mod_synth: UNBRIDGE received, hangup_after_bridge set, hanging up\n");
+							  "mod_synth: hangup_after_bridge set and bridge ended, hanging up\n");
 			switch_channel_hangup(channel, SWITCH_CAUSE_NORMAL_CLEARING);
-		} else {
-			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO,
-							  "mod_synth: UNBRIDGE received, hangup_after_bridge not set, not hanging up\n");
 		}
 		break;
 	default:
