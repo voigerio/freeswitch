@@ -2,9 +2,9 @@
 
 `mod_synth` provides a synthetic FreeSWITCH endpoint that creates a real,
 auto-answered channel with no SIP, no network, and no hardware behind it.
-The channel feeds a looping "beep every second" tone on the read side and
-discards everything written to it. Use it as the left side of an
-`originate` whenever you would otherwise have reached for `loopback/`.
+The channel feeds 20 ms silence frames on the read side and discards
+everything written to it. Use it as the left side of an `originate`
+whenever you would otherwise have reached for `loopback/`.
 
 ```
 originate synth/<name> &<application>(...)
@@ -149,11 +149,8 @@ uuid_setvar <uuid> my_var hello
 ## What the channel actually does
 
 - Acknowledges `INDICATE_ANSWER` by marking the channel answered.
-- Reads return 20 ms frames at L16/8000/mono pulled from a hardcoded
-  `tone_stream://%(200,800,800)` (200 ms 800 Hz beep, 800 ms silence,
-  looped — "beep every second"). If the tone open ever fails the read
-  path falls through to silence. Paced by a `soft` timer so the CPU
-  stays idle.
+- Reads return 20 ms L16/8000/mono frames of pure silence (zero PCM),
+  paced by a `soft` timer so the CPU stays idle.
 - Writes are accepted and dropped.
 - `BRIDGE` / `UNBRIDGE` / `AUDIO_SYNC` messages resync the timer so the
   first read after a bridge transition doesn't come back early.
@@ -166,5 +163,5 @@ uuid_setvar <uuid> my_var hello
 - No video support.
 - No DTMF generation (DTMF send is a no-op).
 - No media negotiation; the codec is fixed to L16/8000/20 ms mono.
-- The audio source is a fixed beep tone — useful as an "alive"
-  indicator but not a substitute for music or speech.
+- The audio source is pure silence — there's nothing meaningful to record
+  from a bare `synth/` leg.
