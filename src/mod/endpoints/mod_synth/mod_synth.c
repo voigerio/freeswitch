@@ -3,8 +3,7 @@
  *
  * Originating synth/<name> creates a synthetic channel that:
  *   - is instantly answerable,
- *   - feeds 20ms L16/8000 audio frames on read (timer-paced), looping a
- *     short "beep every second" tone as the audio source,
+ *   - feeds 20ms L16/8000 silence frames on read (timer-paced),
  *   - accepts and discards all write frames,
  *   - works with any dialplan application that needs a real channel.
  *
@@ -21,16 +20,8 @@
  *   originate synth/test 1000 XML default
  */
 
-/* Read path generates the audio in C -- 800 Hz square wave for 200 ms,
-   then 800 ms silence, looping every second. Avoids depending on the FS
-   file API (which had EOF/seek edge cases for tone_stream://). */
 #define SYNTH_SAMPLE_RATE   8000   /* Hz */
-#define SYNTH_SAMPLES_20MS  160
-#define SYNTH_TONE_HZ       800
-#define SYNTH_TONE_AMP      16000
-#define SYNTH_CYCLE_SAMPLES (SYNTH_SAMPLE_RATE)             /* 1 second cycle */
-#define SYNTH_TONE_SAMPLES  (SYNTH_SAMPLE_RATE / 5)         /* 200 ms tone */
-#define SYNTH_HALFCYCLE     (SYNTH_SAMPLE_RATE / SYNTH_TONE_HZ / 2)  /* square */
+#define SYNTH_SAMPLES_20MS  160    /* 20 ms @ 8 kHz */
 
 #include <switch.h>
 
@@ -56,11 +47,6 @@ struct private_object {
 	uint8_t                  databuf[SWITCH_RECOMMENDED_BUFFER_SIZE];
 	switch_mutex_t          *mutex;
 	uint32_t                 flags;
-
-	/* Beep generator state: current position within the 1-second cycle
-	   (0..SYNTH_CYCLE_SAMPLES-1). channel_read_frame advances this by
-	   SYNTH_SAMPLES_20MS on every tick. */
-	uint32_t                 beep_pos;
 
 	/* Optional hard deadline in microseconds (0 = disabled). When the wall
 	   clock crosses this point, channel_read_frame hangs up the channel. */
@@ -204,25 +190,8 @@ static switch_status_t channel_read_frame(switch_core_session_t *session, switch
 		return SWITCH_STATUS_FALSE;
 	}
 
-	{
-		int16_t *out = (int16_t *)tech_pvt->databuf;
-		uint32_t pos = tech_pvt->beep_pos;
-		int      i;
-
-		for (i = 0; i < SYNTH_SAMPLES_20MS; i++) {
-			if (pos < SYNTH_TONE_SAMPLES) {
-				out[i] = ((pos / SYNTH_HALFCYCLE) & 1) ? -SYNTH_TONE_AMP : SYNTH_TONE_AMP;
-			} else {
-				out[i] = 0;
-			}
-			pos++;
-			if (pos >= SYNTH_CYCLE_SAMPLES) {
-				pos = 0;
-			}
-		}
-		tech_pvt->beep_pos = pos;
-	}
-
+	/* databuf is zeroed once in synth_tech_init and never mutated, so the
+	   read path is a fixed-cost field set plus the timer wait above. */
 	tech_pvt->read_frame.flags    = SFF_NONE;
 	tech_pvt->read_frame.codec    = &tech_pvt->read_codec;
 	tech_pvt->read_frame.datalen  = SYNTH_SAMPLES_20MS * 2;
@@ -335,7 +304,6 @@ static switch_status_t synth_tech_init(private_t *tech_pvt, switch_core_session_
 	tech_pvt->read_frame.rate     = SYNTH_SAMPLE_RATE;
 	tech_pvt->read_frame.channels = 1;
 	tech_pvt->read_frame.flags    = SFF_NONE;
-	tech_pvt->beep_pos            = 0;
 	memset(tech_pvt->databuf, 0, sizeof(tech_pvt->databuf));
 
 	switch_mutex_init(&tech_pvt->mutex, SWITCH_MUTEX_NESTED, pool);
