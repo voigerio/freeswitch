@@ -463,6 +463,7 @@ struct cc_queue {
 	switch_bool_t abandoned_resume_allowed;
 
 	uint32_t max_wait_time;
+	switch_bool_t max_wait_time_hangup_on_ring;
 	uint32_t max_wait_time_with_no_agent;
 	uint32_t max_wait_time_with_no_agent_time_reached;
 	char *agent_no_answer_status;
@@ -578,6 +579,7 @@ cc_queue_t *queue_set_config(cc_queue_t *queue)
 	SWITCH_CONFIG_SET_ITEM(queue->config[i++], "abandoned-resume-allowed", SWITCH_CONFIG_BOOL, 0, &queue->abandoned_resume_allowed, SWITCH_FALSE, NULL, NULL, NULL);
 
 	SWITCH_CONFIG_SET_ITEM(queue->config[i++], "max-wait-time", SWITCH_CONFIG_INT, 0, &queue->max_wait_time, 0, &config_int_0_86400, NULL, NULL);
+	SWITCH_CONFIG_SET_ITEM(queue->config[i++], "max-wait-time-hangup-on-ring", SWITCH_CONFIG_BOOL, 0, &queue->max_wait_time_hangup_on_ring, SWITCH_FALSE, NULL, NULL, NULL);
 	SWITCH_CONFIG_SET_ITEM(queue->config[i++], "max-wait-time-with-no-agent", SWITCH_CONFIG_INT, 0, &queue->max_wait_time_with_no_agent, 0, &config_int_0_86400, NULL, NULL);
 	SWITCH_CONFIG_SET_ITEM(queue->config[i++], "max-wait-time-with-no-agent-time-reached", SWITCH_CONFIG_INT, 0, &queue->max_wait_time_with_no_agent_time_reached, 5, &config_int_0_86400, NULL, NULL);
 
@@ -2871,12 +2873,17 @@ void *SWITCH_THREAD_FUNC cc_member_thread_run(switch_thread_t *thread, void *obj
 		if (queue->max_wait_time > 0 && queue->max_wait_time <=  time_now - m->t_member_called) {
 			/* timeout reached, check if we're originating at this time and give caller a one more chance */
 			if (switch_channel_test_app_flag_key(CC_APP_KEY, member_channel, CC_APP_AGENT_CONNECTING)) {
-				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(member_session), SWITCH_LOG_DEBUG, "Member %s <%s> in queue '%s' reached max wait time and we're connecting, waiting for agent to be connected...\n", m->member_cid_name, m->member_cid_number, m->queue_name);
-				for (;;) {
-					if (!switch_channel_test_app_flag_key(CC_APP_KEY, member_channel, CC_APP_AGENT_CONNECTING)) {
-						break;
+				if (queue->max_wait_time_hangup_on_ring) {
+					/* Forcefully hang up even while an agent is ringing, instead of waiting for the connect attempt to finish */
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(member_session), SWITCH_LOG_DEBUG, "Member %s <%s> in queue '%s' reached max wait time while an agent is ringing, forcing hangup (max-wait-time-hangup-on-ring)\n", m->member_cid_name, m->member_cid_number, m->queue_name);
+				} else {
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(member_session), SWITCH_LOG_DEBUG, "Member %s <%s> in queue '%s' reached max wait time and we're connecting, waiting for agent to be connected...\n", m->member_cid_name, m->member_cid_number, m->queue_name);
+					for (;;) {
+						if (!switch_channel_test_app_flag_key(CC_APP_KEY, member_channel, CC_APP_AGENT_CONNECTING)) {
+							break;
+						}
+						switch_cond_next();
 					}
-					switch_cond_next();
 				}
 			}
 			if (!switch_channel_test_flag(member_channel, CF_BRIDGED)) {
@@ -4160,7 +4167,7 @@ SWITCH_STANDARD_API(cc_config_api_function)
 				                       "name|strategy|moh_sound|time_base_score|tier_rules_apply|"\
 				                       "tier_rule_wait_second|tier_rule_wait_multiply_level|"\
 				                       "tier_rule_no_agent_no_wait|discard_abandoned_after|"\
-				                       "abandoned_resume_allowed|max_wait_time|max_wait_time_with_no_agent|"\
+				                       "abandoned_resume_allowed|max_wait_time|max_wait_time_hangup_on_ring|max_wait_time_with_no_agent|"\
 				                       "max_wait_time_with_no_agent_time_reached|record_template|calls_answered|calls_abandoned|ring_progressively_delay|skip_agents_with_external_calls|agent_no_answer_status\n");
 				switch_mutex_lock(globals.mutex);
 				for (hi = switch_core_hash_first(globals.queue_hash); hi; hi = switch_core_hash_next(&hi)) {
@@ -4170,7 +4177,7 @@ SWITCH_STANDARD_API(cc_config_api_function)
 					cc_queue_t *queue;
 					switch_core_hash_this(hi, &key, &keylen, &val);
 					queue = (cc_queue_t *) val;
-					stream->write_function(stream, "%s|%s|%s|%s|%s|%d|%s|%s|%d|%s|%d|%d|%d|%s|%d|%d|%d|%s|%s\n",
+					stream->write_function(stream, "%s|%s|%s|%s|%s|%d|%s|%s|%d|%s|%d|%s|%d|%d|%s|%d|%d|%d|%s|%s\n",
 					                       queue->name,
 					                       queue->strategy,
 					                       queue->moh,
@@ -4182,6 +4189,7 @@ SWITCH_STANDARD_API(cc_config_api_function)
 					                       queue->discard_abandoned_after,
 					                       (queue->abandoned_resume_allowed?"true":"false"),
 					                       queue->max_wait_time,
+					                       (queue->max_wait_time_hangup_on_ring?"true":"false"),
 					                       queue->max_wait_time_with_no_agent,
 					                       queue->max_wait_time_with_no_agent_time_reached,
 					                       queue->record_template,
@@ -4389,6 +4397,7 @@ SWITCH_STANDARD_JSON_API(json_callcenter_config_function)
 			cJSON_AddItemToObject(o, "discard_abandoned_after", cJSON_CreateNumber(queue->discard_abandoned_after));
 			cJSON_AddItemToObject(o, "abandoned_resume_allowed", cJSON_CreateString(queue->abandoned_resume_allowed ? "true": "false"));
 			cJSON_AddItemToObject(o, "max_wait_time", cJSON_CreateNumber(queue->max_wait_time));
+			cJSON_AddItemToObject(o, "max_wait_time_hangup_on_ring", cJSON_CreateString(queue->max_wait_time_hangup_on_ring ? "true" : "false"));
 			cJSON_AddItemToObject(o, "max_wait_time_with_no_agent", cJSON_CreateNumber(queue->max_wait_time_with_no_agent));
 			cJSON_AddItemToObject(o, "max_wait_time_with_no_agent_time_reached", cJSON_CreateNumber(queue->max_wait_time_with_no_agent_time_reached));
 			cJSON_AddItemToObject(o, "record_template", cJSON_CreateString(queue->record_template));
