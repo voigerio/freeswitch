@@ -11869,6 +11869,8 @@ void sofia_handle_sip_i_invite_replaces(switch_core_session_t *session, switch_c
 					tech_pvt->caller_profile->destination_number = switch_core_sprintf(tech_pvt->caller_profile->pool, "hangup:CALL_REJECTED");
 				} else {
 					switch_channel_mark_hold(b_channel, SWITCH_FALSE);
+					/* the intercept hangs b_channel up with PICKED_OFF; let its hangup hooks find the leg that carries the call on */
+					switch_channel_set_variable(b_channel, "sip_replaced_by_uuid", switch_core_session_get_uuid(session));
 					tech_pvt->caller_profile->destination_number = switch_core_sprintf(tech_pvt->caller_profile->pool, "answer,intercept:%s", bridge_uuid);
 					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "call %s intercepted\n", bridge_uuid);
 					if (sofia_test_pflag(profile, PFLAG_FIRE_TRANFER_EVENTS)

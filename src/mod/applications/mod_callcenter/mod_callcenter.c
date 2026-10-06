@@ -3445,6 +3445,76 @@ static switch_bool_t cc_is_agent_tracked(const char *tracked_agents, const char 
 	return found;
 }
 
+static switch_status_t cc_hook_state_run(switch_core_session_t *session);
+
+/*
+ * A SIP Replaces INVITE (e.g. the agent's softphone re-attaching after a page reload)
+ * is serviced by mod_sofia as answer,intercept, which hangs the tracked leg up with
+ * PICKED_OFF while the conversation carries on over the replacing leg. Move the
+ * tracking onto that leg instead of releasing the agents mid-call.
+ * Returns SWITCH_TRUE if the tracking was handed over.
+ */
+static switch_bool_t cc_handover_tracked_agents(switch_core_session_t *session, switch_channel_t *channel, const char *tracked_agents)
+{
+	const char *new_uuid = switch_channel_get_variable(channel, "sip_replaced_by_uuid");
+	switch_core_session_t *new_session = NULL;
+	switch_channel_t *new_channel = NULL;
+	char *new_list = NULL;
+	char *agents_dup = NULL;
+	char *argv[128] = { 0 };
+	int argc, i;
+
+	if (zstr(new_uuid) || switch_channel_get_cause(channel) != SWITCH_CAUSE_PICKED_OFF) {
+		return SWITCH_FALSE;
+	}
+
+	if (!(new_session = switch_core_session_locate(new_uuid))) {
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "Replacing leg %s is gone, cannot hand over tracked agents: %s\n", new_uuid, tracked_agents);
+		return SWITCH_FALSE;
+	}
+
+	new_channel = switch_core_session_get_channel(new_session);
+	new_list = switch_safe_strdup(switch_channel_get_variable(new_channel, "cc_tracked_agent"));
+
+	agents_dup = switch_safe_strdup(tracked_agents);
+	argc = switch_separate_string(agents_dup, ',', argv, (sizeof(argv) / sizeof(argv[0])));
+
+	for (i = 0; i < argc; i++) {
+		if (zstr(argv[i])) {
+			continue;
+		}
+
+		if (cc_is_agent_tracked(new_list, argv[i])) {
+			/* Replacing leg already counts this agent, drop the count held by this leg */
+			cc_untrack_agent_internal(session, argv[i]);
+		} else if (new_list) {
+			char *tmp = new_list;
+			new_list = switch_mprintf("%s,%s", tmp, argv[i]);
+			switch_safe_free(tmp);
+		} else {
+			new_list = switch_safe_strdup(argv[i]);
+		}
+	}
+
+	switch_safe_free(agents_dup);
+
+	if (!zstr(new_list)) {
+		switch_channel_set_variable(new_channel, "cc_tracked_agent", new_list);
+
+		/* Fails if the replacing leg already runs its own hook, which then holds the interface */
+		if (switch_core_event_hook_add_state_run(new_session, cc_hook_state_run) == SWITCH_STATUS_SUCCESS) {
+			PROTECT_INTERFACE(app_interface);
+		}
+
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "Tracked leg replaced by %s, handing over tracked agents: %s\n", new_uuid, tracked_agents);
+	}
+
+	switch_safe_free(new_list);
+	switch_core_session_rwunlock(new_session);
+
+	return SWITCH_TRUE;
+}
+
 static switch_status_t cc_hook_state_run(switch_core_session_t *session)
 {
 	switch_channel_t *channel = switch_core_session_get_channel(session);
@@ -3458,7 +3528,7 @@ static switch_status_t cc_hook_state_run(switch_core_session_t *session)
 	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Called cc_hook_state_run channel %s with state %s\n", switch_channel_get_name(channel), switch_channel_state_name(state));
 
 	if (state == CS_HANGUP) {
-		if (!zstr(tracked_agents)) {
+		if (!zstr(tracked_agents) && !cc_handover_tracked_agents(session, channel, tracked_agents)) {
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Tracked call ended, untracking agents: %s\n", tracked_agents);
 
 			agents_dup = switch_safe_strdup(tracked_agents);
