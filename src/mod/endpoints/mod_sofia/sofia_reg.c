@@ -2089,13 +2089,12 @@ uint8_t sofia_reg_handle_register_token(nua_t *nua, sofia_profile_t *profile, nu
 								 "sub_host='%q', network_ip='%q',network_port='%q',"
 								 "presence_hosts='%q', server_host='%q', orig_server_host='%q',"
 								 "hostname='%q', orig_hostname='%q',"
-								 "expires = %ld, ping_expires=%ld, force_ping=%d, ping_interval=%d "
+								 "expires = %ld, force_ping=%d, ping_interval=%d "
 								 "where sip_user='%q' and sip_username='%q' and sip_host='%q' and contact='%q' and sip_instance='%q'",
 								 call_id, sub_host, network_ip, network_port_c,
 								 profile->presence_hosts ? profile->presence_hosts : "", guess_ip4, guess_ip4,
                                                                  mod_sofia_globals.hostname, mod_sofia_globals.hostname,
 								 (long) reg_time + (long) exptime + profile->sip_expires_late_margin,
-								 (long) switch_epoch_time_now(NULL) + sofia_reg_uniform_distribution(ping_interval ? ping_interval : profile->iping_seconds),
 								 force_ping, ping_interval, to_user, username, reg_host, contact_str, sip_instance);
 		}
 
