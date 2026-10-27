@@ -2448,6 +2448,7 @@ int sofia_glue_init_sql(sofia_profile_t *profile)
 		"   rpid             VARCHAR(255),\n"
 		"   expires          BIGINT,\n"
 		"   ping_expires     INTEGER not null default 0,\n"
+		"   ping_interval    INTEGER not null default 0,\n"
 		"   user_agent       VARCHAR(255),\n"
 		"   server_user      VARCHAR(255),\n"
 		"   server_host      VARCHAR(255),\n"
@@ -2666,6 +2667,7 @@ int sofia_glue_init_sql(sofia_profile_t *profile)
 	switch_cache_db_test_reactive(dbh, "select ping_time from sip_registrations", NULL, "alter table sip_registrations add column ping_time BIGINT not null default 0");
 	switch_cache_db_test_reactive(dbh, "select force_ping from sip_registrations", NULL, "alter table sip_registrations add column force_ping INTEGER not null default 0");
 	switch_cache_db_test_reactive(dbh, "select sip_instance from sip_registrations", NULL, "alter table sip_registrations add column sip_instance VARCHAR(255)");
+	switch_cache_db_test_reactive(dbh, "select ping_interval from sip_registrations", NULL, "alter table sip_registrations add column ping_interval INTEGER not null default 0");
 
 	test2 = switch_mprintf("%s;%s", test_sql, test_sql);
 
