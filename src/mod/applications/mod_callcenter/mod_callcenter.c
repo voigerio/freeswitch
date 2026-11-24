@@ -166,7 +166,8 @@ typedef enum {
 	CC_MEMBER_CANCEL_REASON_TIMEOUT,
 	CC_MEMBER_CANCEL_REASON_NO_AGENT_TIMEOUT,
 	CC_MEMBER_CANCEL_REASON_BREAK_OUT,
-	CC_MEMBER_CANCEL_REASON_EXIT_WITH_KEY
+	CC_MEMBER_CANCEL_REASON_EXIT_WITH_KEY,
+	CC_MEMBER_CANCEL_REASON_PREFERRED_AGENT_TIMEOUT
 } cc_member_cancel_reason_t;
 
 static struct cc_member_cancel_reason_table MEMBER_CANCEL_REASON_CHART[] = {
@@ -175,6 +176,7 @@ static struct cc_member_cancel_reason_table MEMBER_CANCEL_REASON_CHART[] = {
 	{"NO_AGENT_TIMEOUT", CC_MEMBER_CANCEL_REASON_NO_AGENT_TIMEOUT},
 	{"BREAK_OUT", CC_MEMBER_CANCEL_REASON_BREAK_OUT},
 	{"EXIT_WITH_KEY", CC_MEMBER_CANCEL_REASON_EXIT_WITH_KEY},
+	{"PREFERRED_AGENT_TIMEOUT", CC_MEMBER_CANCEL_REASON_PREFERRED_AGENT_TIMEOUT},
 	{NULL, 0}
 };
 
@@ -2247,6 +2249,23 @@ done:
 	return NULL;
 }
 
+/* Preferred agent for this member (cc_preferred_agent), with how long to wait for them (cc_preferred_agent_wait, 0 = no limit)
+   and whether to cancel instead of falling back to any agent once that wait is over (cc_preferred_agent_only) */
+static const char *cc_preferred_agent_get(switch_channel_t *channel, int *wait, switch_bool_t *only)
+{
+	const char *agent = switch_channel_get_variable(channel, "cc_preferred_agent");
+	const char *p;
+
+	if (zstr(agent)) {
+		return NULL;
+	}
+
+	*wait = (p = switch_channel_get_variable(channel, "cc_preferred_agent_wait")) ? atoi(p) : 0;
+	*only = switch_true(switch_channel_get_variable(channel, "cc_preferred_agent_only"));
+
+	return agent;
+}
+
 struct agent_callback {
 	const char *queue_name;
 	const char *system;
@@ -2487,6 +2506,7 @@ static int members_callback(void *pArg, int argc, char **argv, char **columnName
 	const char *member_abandoned_epoch = NULL;
 	const char *serving_agent = NULL;
 	const char *last_originated_call = NULL;
+	char *sql_preferred_agent = NULL;
 	memset(&cbt, 0, sizeof(cbt));
 
 	cbt.queue_name = argv[0];
@@ -2600,6 +2620,27 @@ static int members_callback(void *pArg, int argc, char **argv, char **columnName
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Member %s <%s> in Queue %s have no session uuid, skip this member\n", cbt.member_cid_name, cbt.member_cid_number, cbt.queue_name);
 	}
 
+	/* Restrict the search to the preferred agent until their wait is over (or for good if the member is only for them) */
+	{
+		switch_core_session_t *member_session = switch_core_session_locate(cbt.member_session_uuid);
+		if (member_session) {
+			switch_channel_t *member_channel = switch_core_session_get_channel(member_session);
+			const char *preferred_agent, *joined_epoch;
+			int preferred_wait = 0;
+			switch_bool_t preferred_only = SWITCH_FALSE;
+
+			if ((preferred_agent = cc_preferred_agent_get(member_channel, &preferred_wait, &preferred_only))) {
+				joined_epoch = switch_channel_get_variable(member_channel, "cc_queue_joined_epoch");
+				if (preferred_only || preferred_wait <= 0 || !joined_epoch || (long) local_epoch_time_now(NULL) < atol(joined_epoch) + preferred_wait) {
+					sql_preferred_agent = switch_mprintf(" AND agents.name = '%q'", preferred_agent);
+					/* The preferred agent is offered the call whatever tier level they are on */
+					tier_rules_apply = SWITCH_FALSE;
+				}
+			}
+			switch_core_session_rwunlock(member_session);
+		}
+	}
+
 	cbt.tier = 0;
 	cbt.tier_agent_available = 0;
 
@@ -2634,19 +2675,23 @@ static int members_callback(void *pArg, int argc, char **argv, char **columnName
 				" AND (agents.status = '%q' OR agents.status = '%q' OR agents.status = '%q')"
 				" AND tiers.position > %d"
 				" AND tiers.level = %d"
+				"%s"
 				" UNION "
 				"SELECT instance_id, name, status, contact, no_answer_count, max_no_answer, reject_delay_time, busy_delay_time, no_answer_delay_time, tiers.state, agents.last_bridge_end, agents.wrap_up_time, agents.state, agents.ready_time, tiers.position as tiers_position, tiers.level as tiers_level, agents.type, agents.uuid, external_calls_count, agents.last_offered_call as agents_last_offered_call, 2 as dyn_order FROM agents LEFT JOIN tiers ON (agents.name = tiers.agent)"
 				" WHERE tiers.queue = '%q'"
 				" AND (agents.status = '%q' OR agents.status = '%q' OR agents.status = '%q')"
 				" AND tiers.level > %d"
+				"%s"
 				" ORDER BY dyn_order asc, tiers_level, tiers_position, agents_last_offered_call",
 				queue_name,
 				cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE), cc_agent_status2str(CC_AGENT_STATUS_ON_BREAK), cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE_ON_DEMAND),
 				position,
 				level,
+				switch_str_nil(sql_preferred_agent),
 				queue_name,
 				cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE), cc_agent_status2str(CC_AGENT_STATUS_ON_BREAK), cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE_ON_DEMAND),
-				level
+				level,
+				switch_str_nil(sql_preferred_agent)
 				);
 	} else if (!strcasecmp(queue->strategy, "round-robin")) {
 		sql = switch_mprintf("SELECT instance_id, name, status, contact, no_answer_count, max_no_answer, reject_delay_time, busy_delay_time, no_answer_delay_time, tiers.state, agents.last_bridge_end, agents.wrap_up_time, agents.state, agents.ready_time, tiers.position as tiers_position, tiers.level as tiers_level, agents.type, agents.uuid, external_calls_count, agents.last_offered_call as agents_last_offered_call, 1 as dyn_order FROM agents LEFT JOIN tiers ON (agents.name = tiers.agent)"
@@ -2654,17 +2699,21 @@ static int members_callback(void *pArg, int argc, char **argv, char **columnName
 				" AND (agents.status = '%q' OR agents.status = '%q' OR agents.status = '%q')"
 				" AND tiers.position > (SELECT tiers.position FROM agents LEFT JOIN tiers ON (agents.name = tiers.agent) WHERE tiers.queue = '%q' AND agents.last_offered_call > 0 ORDER BY agents.last_offered_call DESC LIMIT 1)"
 				" AND tiers.level = (SELECT tiers.level FROM agents LEFT JOIN tiers ON (agents.name = tiers.agent) WHERE tiers.queue = '%q' AND agents.last_offered_call > 0 ORDER BY agents.last_offered_call DESC LIMIT 1)"
+				"%s"
 				" UNION "
 				"SELECT instance_id, name, status, contact, no_answer_count, max_no_answer, reject_delay_time, busy_delay_time, no_answer_delay_time, tiers.state, agents.last_bridge_end, agents.wrap_up_time, agents.state, agents.ready_time, tiers.position as tiers_position, tiers.level as tiers_level, agents.type, agents.uuid, external_calls_count, agents.last_offered_call as agents_last_offered_call, 2 as dyn_order FROM agents LEFT JOIN tiers ON (agents.name = tiers.agent)"
 				" WHERE tiers.queue = '%q'"
 				" AND (agents.status = '%q' OR agents.status = '%q' OR agents.status = '%q')"
+				"%s"
 				" ORDER BY dyn_order asc, tiers_level, tiers_position, agents_last_offered_call",
 				queue_name,
 				cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE), cc_agent_status2str(CC_AGENT_STATUS_ON_BREAK), cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE_ON_DEMAND),
 				queue_name,
 				queue_name,
+				switch_str_nil(sql_preferred_agent),
 				queue_name,
-				cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE), cc_agent_status2str(CC_AGENT_STATUS_ON_BREAK), cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE_ON_DEMAND)
+				cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE), cc_agent_status2str(CC_AGENT_STATUS_ON_BREAK), cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE_ON_DEMAND),
+				switch_str_nil(sql_preferred_agent)
 				);
 
 	} else {
@@ -2693,9 +2742,11 @@ static int members_callback(void *pArg, int argc, char **argv, char **columnName
 		sql = switch_mprintf("SELECT instance_id, name, status, contact, no_answer_count, max_no_answer, reject_delay_time, busy_delay_time, no_answer_delay_time, tiers.state, agents.last_bridge_end, agents.wrap_up_time, agents.state, agents.ready_time, tiers.position, tiers.level, agents.type, agents.uuid, external_calls_count FROM agents LEFT JOIN tiers ON (agents.name = tiers.agent)"
 				" WHERE tiers.queue = '%q'"
 				" AND (agents.status = '%q' OR agents.status = '%q' OR agents.status = '%q')"
+				"%s"
 				" ORDER BY %q",
 				queue_name,
 				cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE), cc_agent_status2str(CC_AGENT_STATUS_ON_BREAK), cc_agent_status2str(CC_AGENT_STATUS_AVAILABLE_ON_DEMAND),
+				switch_str_nil(sql_preferred_agent),
 				sql_order_by);
 		switch_safe_free(sql_order_by);
 
@@ -2728,7 +2779,10 @@ static int members_callback(void *pArg, int argc, char **argv, char **columnName
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Queue %s not found locally, skip this member\n", cbt.queue_name);
 		goto end;
 	} else {
-		queue->last_agent_exist_check = local_epoch_time_now(NULL);
+		/* A search restricted to the preferred agent says nothing about the rest of the queue */
+		if (!sql_preferred_agent) {
+			queue->last_agent_exist_check = local_epoch_time_now(NULL);
+		}
 		if (cbt.agent_found) {
 			queue->last_agent_exist = queue->last_agent_exist_check;
 		} else {
@@ -2750,6 +2804,7 @@ end:
 	switch_safe_free(queue_name);
 	switch_safe_free(queue_strategy);
 	switch_safe_free(queue_record_template);
+	switch_safe_free(sql_preferred_agent);
 
 	return 0;
 }
@@ -2833,6 +2888,9 @@ struct member_thread_helper {
 	const char *member_cid_number;
 	switch_time_t t_member_called;
 	cc_member_cancel_reason_t member_cancel_reason;
+	const char *preferred_agent;
+	switch_time_t preferred_agent_until;
+	switch_bool_t preferred_agent_only;
 
 	int running;
 	switch_memory_pool_t *pool;
@@ -2903,6 +2961,22 @@ void *SWITCH_THREAD_FUNC cc_member_thread_run(switch_thread_t *thread, void *obj
 					switch_channel_set_flag_value(member_channel, CF_BREAK, 2);
 
 				}
+			}
+		}
+
+		/* Preferred agent wait is over: cancel if the member was only for them, otherwise any agent can now take it */
+		if (m->preferred_agent && time_now >= m->preferred_agent_until) {
+			if (!m->preferred_agent_only) {
+				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(member_session), SWITCH_LOG_DEBUG, "Member %s <%s> in queue '%s' waited %d sec. for preferred agent '%s', falling back to any agent\n", m->member_cid_name, m->member_cid_number, m->queue_name, (int) (m->preferred_agent_until - m->t_member_called), m->preferred_agent);
+				m->preferred_agent = NULL;
+			} else if (!switch_channel_test_app_flag_key(CC_APP_KEY, member_channel, CC_APP_AGENT_CONNECTING)) {
+				/* If the preferred agent is being rung, check again once they answer or not */
+				if (!switch_channel_test_flag(member_channel, CF_BRIDGED) && m->member_cancel_reason == CC_MEMBER_CANCEL_REASON_NONE) {
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(member_session), SWITCH_LOG_DEBUG, "Member %s <%s> in queue '%s' waited %d sec. for preferred agent '%s' only\n", m->member_cid_name, m->member_cid_number, m->queue_name, (int) (m->preferred_agent_until - m->t_member_called), m->preferred_agent);
+					m->member_cancel_reason = CC_MEMBER_CANCEL_REASON_PREFERRED_AGENT_TIMEOUT;
+					switch_channel_set_flag_value(member_channel, CF_BREAK, 2);
+				}
+				m->preferred_agent = NULL;
 			}
 		}
 
@@ -3169,6 +3243,16 @@ SWITCH_STANDARD_APP(callcenter_function)
 	h->queue_name = switch_core_strdup(h->pool, queue_name);
 	h->t_member_called = t_member_called;
 	h->member_cancel_reason = CC_MEMBER_CANCEL_REASON_NONE;
+	{
+		int preferred_wait = 0;
+		const char *preferred_agent = cc_preferred_agent_get(member_channel, &preferred_wait, &h->preferred_agent_only);
+
+		/* With no wait limit there is nothing for the member thread to do, the dispatch keeps the preferred agent */
+		if (preferred_agent && preferred_wait > 0) {
+			h->preferred_agent = switch_core_strdup(h->pool, preferred_agent);
+			h->preferred_agent_until = t_member_called + preferred_wait;
+		}
+	}
 	h->running = 1;
 
 	switch_threadattr_create(&thd_attr, h->pool);
