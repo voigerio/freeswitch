@@ -1685,9 +1685,7 @@ static switch_status_t playback_array(switch_core_session_t *session, const char
 	return status;
 }
 
-/* Preferred agent for this member (cc_preferred_agent), with how long to wait for them (cc_preferred_agent_wait, 0 = offer
-   the call to them once, right away) and whether to cancel instead of falling back to any agent once that wait is over
-   (cc_preferred_agent_only) */
+/* Preferred agent settings from the member channel (wait 0 = offer the call to them once) */
 static const char *cc_preferred_agent_get(switch_channel_t *channel, int *wait, switch_bool_t *only)
 {
 	const char *agent = switch_channel_get_variable(channel, "cc_preferred_agent");
@@ -1710,7 +1708,7 @@ static void cc_preferred_agent_offer_failed(switch_channel_t *member_channel, co
 	int preferred_wait = 0;
 	switch_bool_t preferred_only = SWITCH_FALSE;
 
-	if ((preferred_agent = cc_preferred_agent_get(member_channel, &preferred_wait, &preferred_only)) && preferred_wait <= 0 && !strcmp(preferred_agent, agent_name)) {
+	if ((preferred_agent = cc_preferred_agent_get(member_channel, &preferred_wait, &preferred_only)) && !switch_channel_get_variable(member_channel, "cc_preferred_agent_until") && !strcmp(preferred_agent, agent_name)) {
 		switch_channel_set_variable(member_channel, "cc_preferred_agent_missed", "true");
 	}
 }
@@ -2648,19 +2646,18 @@ static int members_callback(void *pArg, int argc, char **argv, char **columnName
 		switch_core_session_t *member_session = switch_core_session_locate(cbt.member_session_uuid);
 		if (member_session) {
 			switch_channel_t *member_channel = switch_core_session_get_channel(member_session);
-			const char *preferred_agent, *joined_epoch;
+			const char *preferred_agent, *preferred_until;
 			int preferred_wait = 0;
 			switch_bool_t preferred_only = SWITCH_FALSE;
 			switch_bool_t waiting;
 
 			if ((preferred_agent = cc_preferred_agent_get(member_channel, &preferred_wait, &preferred_only))) {
-				if (preferred_wait <= 0) {
+				if ((preferred_until = switch_channel_get_variable(member_channel, "cc_preferred_agent_until"))) {
+					waiting = (long) local_epoch_time_now(NULL) < atol(preferred_until);
+				} else {
 					/* No wait: a single offer, over once it could not be made or was not answered */
 					waiting = !switch_true(switch_channel_get_variable(member_channel, "cc_preferred_agent_missed"));
 					preferred_agent_first_offer = waiting && !switch_true(switch_channel_get_variable(member_channel, "cc_preferred_agent_offered"));
-				} else {
-					joined_epoch = switch_channel_get_variable(member_channel, "cc_queue_joined_epoch");
-					waiting = !joined_epoch || (long) local_epoch_time_now(NULL) < atol(joined_epoch) + preferred_wait;
 				}
 				if (preferred_only || waiting) {
 					sql_preferred_agent = switch_mprintf(" AND agents.name = '%q'", preferred_agent);
@@ -2929,7 +2926,6 @@ struct member_thread_helper {
 	switch_time_t t_member_called;
 	cc_member_cancel_reason_t member_cancel_reason;
 	const char *preferred_agent;
-	switch_time_t preferred_agent_until; /* 0 when there is no wait, see cc_preferred_agent_missed */
 	switch_bool_t preferred_agent_only;
 
 	int running;
@@ -2943,6 +2939,7 @@ void *SWITCH_THREAD_FUNC cc_member_thread_run(switch_thread_t *thread, void *obj
 	switch_channel_t *member_channel = NULL;
 	switch_time_t last_announce = local_epoch_time_now(NULL);
 	switch_bool_t announce_valid = SWITCH_TRUE;
+	const char *p;
 
 	if (member_session) {
 		member_channel = switch_core_session_get_channel(member_session);
@@ -3010,7 +3007,7 @@ void *SWITCH_THREAD_FUNC cc_member_thread_run(switch_thread_t *thread, void *obj
 		}
 
 		/* Preferred agent wait is over: cancel if the member was only for them, otherwise any agent can now take it */
-		if (m->preferred_agent && (m->preferred_agent_until ? time_now >= m->preferred_agent_until : switch_true(switch_channel_get_variable(member_channel, "cc_preferred_agent_missed")))) {
+		if (m->preferred_agent && ((p = switch_channel_get_variable(member_channel, "cc_preferred_agent_until")) ? time_now >= atol(p) : switch_true(switch_channel_get_variable(member_channel, "cc_preferred_agent_missed")))) {
 			if (!m->preferred_agent_only) {
 				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(member_session), SWITCH_LOG_DEBUG, "Member %s <%s> in queue '%s' waited %d sec. for preferred agent '%s', falling back to any agent\n", m->member_cid_name, m->member_cid_number, m->queue_name, (int) (time_now - m->t_member_called), m->preferred_agent);
 				m->preferred_agent = NULL;
@@ -3187,6 +3184,18 @@ SWITCH_STANDARD_APP(callcenter_function)
 	switch_channel_set_variable(member_channel, "cc_agent_found", NULL);
 	switch_channel_set_variable(member_channel, "cc_agent_bridged", NULL);
 
+	/* Deadline for the preferred agent, read by the dispatch and the member thread (none when there is no wait) */
+	{
+		int preferred_wait = 0;
+		switch_bool_t preferred_only = SWITCH_FALSE;
+
+		if (cc_preferred_agent_get(member_channel, &preferred_wait, &preferred_only) && preferred_wait > 0) {
+			switch_channel_set_variable_printf(member_channel, "cc_preferred_agent_until", "%" SWITCH_TIME_T_FMT, t_member_called + preferred_wait);
+		} else {
+			switch_channel_set_variable(member_channel, "cc_preferred_agent_until", NULL);
+		}
+	}
+
 	/* Add manually imported score */
 	if (cc_base_score) {
 		cc_base_score_int += atoi(cc_base_score);
@@ -3294,7 +3303,6 @@ SWITCH_STANDARD_APP(callcenter_function)
 
 		if (preferred_agent) {
 			h->preferred_agent = switch_core_strdup(h->pool, preferred_agent);
-			h->preferred_agent_until = preferred_wait > 0 ? t_member_called + preferred_wait : 0;
 		}
 	}
 	h->running = 1;
