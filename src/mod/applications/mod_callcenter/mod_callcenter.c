@@ -3183,6 +3183,8 @@ SWITCH_STANDARD_APP(callcenter_function)
 	/* Clear flags in case previously set */
 	switch_channel_set_variable(member_channel, "cc_agent_found", NULL);
 	switch_channel_set_variable(member_channel, "cc_agent_bridged", NULL);
+	switch_channel_set_variable(member_channel, "cc_preferred_agent_offered", NULL);
+	switch_channel_set_variable(member_channel, "cc_preferred_agent_missed", NULL);
 
 	/* Deadline for the preferred agent, read by the dispatch and the member thread (none when there is no wait) */
 	{
